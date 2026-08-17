@@ -305,48 +305,68 @@ def create_ui():
         gr.HTML(FOOTER_HTML)
 
         # ================= 交互逻辑 =================
-        def chat_with_kender(message, history, enable_search, file_content):
-            # 不再手动按关键词拼接搜索结果 —— 是否联网交由 Agent 自主决策（search_web 工具）。
+        MAX_DOC_CHARS = 3000
+
+        def build_user_message(message, enable_search, file_content):
+            # 是否优先联网交由 Agent 自主决策（search_web 工具）；
             # 这里仅在用户勾选时给一句偏好提示，最终是否调用仍是模型决定。
             if enable_search:
                 message = f"{message}\n\n[偏好提示] 用户希望优先使用联网搜索获取最新信息。"
-
             if file_content and file_content.strip():
-                message = f"{message}\n\n【文档内容】\n{file_content[:3000]}"
-
-            try:
-                reply = asyncio.run(get_reply(agent, model, message, memory))
-            except Exception as e:
-                return history + [
-                    {"role": "user", "content": message[:100]},
-                    {"role": "assistant", "content": f"错误：{e}"},
-                ]
-
-            history.append({"role": "user", "content": message[:100]})
-            history.append({"role": "assistant", "content": reply})
-            return history
+                message = f"{message}\n\n【文档内容】\n{file_content[:MAX_DOC_CHARS]}"
+            return message
 
         def handle_file(f):
             if f is None:
                 return "", ""
             content = read_document(f.name)
             name = f.name.replace("\\", "/").split("/")[-1]
-            return content, f"✅ 已加载文档：**{name}**（前 3000 字将注入本轮对话）"
+            return content, f"✅ 已加载文档：**{name}**（前 {MAX_DOC_CHARS} 字将注入本轮对话）"
 
         file_input.change(handle_file, [file_input], [file_content, file_status])
 
-        def respond(msg, history, search, content):
+        async def respond(msg, history, search, content):
             # 空消息不处理
             if not msg or not msg.strip():
                 yield "", history, history
                 return
-            # 先展示「正在思考」占位，提升交互反馈（仅更新显示，不写入历史）
+
+            user_msg = msg.strip()
+            agent_input = build_user_message(user_msg, search, content)
+
+            # 1) 先展示「正在思考」占位，提升交互反馈（仅更新显示，不写入历史）
             thinking = list(history) + [
-                {"role": "user", "content": msg},
+                {"role": "user", "content": user_msg},
                 {"role": "assistant", "content": "⏳ Kender 正在思考…"},
             ]
             yield "", thinking, history
-            final = chat_with_kender(msg, history, search, content)
+
+            # 2) 取完整回复（保留 ReAct 工具调用 + 长期记忆持久化）。
+            #    AgentScope 的 ReAct 封装聚合返回，未暴露 token 级流式接口，
+            #    因此这里直接 await 完整回复，再于前端做增量渲染。
+            try:
+                full_reply = await get_reply(agent, model, agent_input, memory)
+            except Exception as e:
+                err_history = list(history) + [
+                    {"role": "user", "content": user_msg},
+                    {"role": "assistant", "content": f"⚠️ 错误：{e}"},
+                ]
+                yield "", err_history, err_history
+                return
+
+            # 3) 打字机式增量显示（前端 incremental rendering）。
+            #    模型侧暂未做 token 级 streaming，改为拿到完整回复后逐字 reveal，
+            #    体感上接近流式输出。真 token streaming 见 README 的 Future Work。
+            base = list(history) + [{"role": "user", "content": user_msg}]
+            step = 3
+            shown = ""
+            for i in range(step, len(full_reply) + step, step):
+                shown = full_reply[:i]
+                current = base + [{"role": "assistant", "content": shown}]
+                yield "", current, current
+                await asyncio.sleep(0.018)
+            # 确保最终完整呈现
+            final = base + [{"role": "assistant", "content": full_reply}]
             yield "", final, final
 
         send_btn.click(

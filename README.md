@@ -21,6 +21,7 @@
 | 📄 文档解析 | 支持 TXT / DOCX / PDF，Web 界面上传后注入上下文再问答 |
 | 🌱 持续认知（key_facts） | 每轮对话后抽取你表达的事实/偏好，回灌到 system prompt，越聊越个性化 |
 | 🐳 容器化部署 | 内置 Dockerfile，可一键打包为镜像部署 |
+| 🌊 流式输出 | 回复以打字机式逐字呈现，体感接近实时流式（前端 incremental rendering） |
 
 ---
 
@@ -164,13 +165,20 @@ docker run --env-file .env -p 7860:7860 kender
 
 > ⚠️ 注意：这不是模型层面的真正"学习"，而是通过**显式记忆机制**模拟的持续认知能力，面试中表述需实事求是。
 
+**4. 流式输出（前端 incremental rendering）**
+
+Web 界面在拿到模型完整回复后，将文本**逐字（每帧约 3 字）增量渲染**到对话气泡，配合「正在思考」占位，体感上接近实时流式输出，明显改善交互等待感。
+
+> 📌 说明：AgentScope 的 `ReActAgent.reply()` 为聚合返回（内部虽有 `async for` 流式 chunk，但不向外暴露），因此这里采用**前端增量 reveal** 而非模型 token 级 streaming。后端 ReAct 工具调用、长期记忆等能力保持不变，零回归风险。若需真 token 级流式，需改写 Agent 调用层以支持流式 ReAct 循环（见后续计划）。
+
 ---
 
 ## 🔧 后续计划
 
 - [x] Docker 容器化部署
 - [x] 多轮连贯由 AgentScope 内部记忆保证；本项目聚焦长期记忆（key_facts / user_name）持久化
-- [ ] 流式输出（Streaming）
+- [x] 流式输出（前端 incremental rendering，打字机式逐字呈现）
+- [ ] 真 token 级 streaming（需改写 AgentScope 调用层以支持流式 ReAct 循环）
 - [ ] FastAPI 后端 + 前端分离部署
 - [ ] 更完整的单元测试覆盖 agent / tools
 
