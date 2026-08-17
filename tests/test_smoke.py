@@ -20,6 +20,7 @@ sys.path.insert(0, ROOT)
 
 from src.memory import load_memory, build_memory_prompt  # noqa: E402
 from src.tools import get_current_date, search_web  # noqa: E402
+from src.rag import split_text  # noqa: E402
 from agentscope.tool import ToolResponse  # noqa: E402
 
 
@@ -63,3 +64,12 @@ def test_search_web_handles_empty():
         res = search_web("无结果查询")
     assert isinstance(res, ToolResponse)
     assert "没有找到" in res.content[0]["text"]
+
+
+def test_split_text_basic():
+    # 分块是纯本地逻辑，不依赖网络 / API Key，适合冒烟测试
+    text = "。".join(f"第{i}句示例内容" for i in range(30))
+    chunks = split_text(text, chunk_size=200, chunk_overlap=40)
+    assert isinstance(chunks, list) and len(chunks) >= 1
+    # 分块不应丢失过多原文（允许少量切分碎片损耗）
+    assert sum(len(c) for c in chunks) >= len(text) * 0.8

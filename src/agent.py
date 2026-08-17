@@ -8,7 +8,7 @@ from agentscope.tool import Toolkit
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 from .memory import load_memory, save_memory, build_memory_prompt
-from .tools import search_web, get_current_date
+from .tools import search_web, get_current_date, retrieve_document
 
 load_dotenv()
 
@@ -19,6 +19,7 @@ def create_agent(memory):
     # 模型在推理时自主决定是否调用 search_web。
     toolkit = Toolkit()
     toolkit.register_tool_function(search_web)
+    toolkit.register_tool_function(retrieve_document)
 
     model = DashScopeChatModel(
         model_name="qwen-plus",

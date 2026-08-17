@@ -229,7 +229,6 @@ def create_ui():
         gr.HTML(HEADER_HTML)
 
         # 跨组件状态：chat_history 是消息源，chatbot 仅负责展示
-        file_content = gr.State("")
         chat_history = gr.State([])
 
         with gr.Row(equal_height=False):
@@ -263,7 +262,7 @@ def create_ui():
                     value=[],
                 )
                 # 清空按钮需等 chatbot 定义后再绑定（避免 NameError）
-                clear_btn.add([chatbot, chat_history, file_content])
+                clear_btn.add([chatbot, chat_history])
 
                 file_status = gr.Markdown("")
 
@@ -305,34 +304,37 @@ def create_ui():
         gr.HTML(FOOTER_HTML)
 
         # ================= 交互逻辑 =================
-        MAX_DOC_CHARS = 3000
-
-        def build_user_message(message, enable_search, file_content):
+        def build_user_message(message, enable_search):
             # 是否优先联网交由 Agent 自主决策（search_web 工具）；
             # 这里仅在用户勾选时给一句偏好提示，最终是否调用仍是模型决定。
+            # 注意：文档不再全文注入，而是由 RAG 工具 retrieve_document 按问题检索片段。
             if enable_search:
                 message = f"{message}\n\n[偏好提示] 用户希望优先使用联网搜索获取最新信息。"
-            if file_content and file_content.strip():
-                message = f"{message}\n\n【文档内容】\n{file_content[:MAX_DOC_CHARS]}"
             return message
 
-        def handle_file(f):
+        async def handle_file(f):
             if f is None:
-                return "", ""
-            content = read_document(f.name)
-            name = f.name.replace("\\", "/").split("/")[-1]
-            return content, f"✅ 已加载文档：**{name}**（前 {MAX_DOC_CHARS} 字将注入本轮对话）"
+                return ""
+            from .rag import build_index
+            try:
+                content = read_document(f.name)
+                # 构建向量库涉及 Embedding 的阻塞 HTTP 调用，丢到线程池避免卡住 UI 事件循环
+                n = await asyncio.to_thread(build_index, content)
+                name = f.name.replace("\\", "/").split("/")[-1]
+                return f"✅ 已构建向量库：**{name}**（{n} 个片段已索引）。现在可以让 Kender 检索文档内容了。"
+            except Exception as e:
+                return f"⚠️ 构建向量库失败：{e}"
 
-        file_input.change(handle_file, [file_input], [file_content, file_status])
+        file_input.change(handle_file, [file_input], [file_status])
 
-        async def respond(msg, history, search, content):
+        async def respond(msg, history, search):
             # 空消息不处理
             if not msg or not msg.strip():
                 yield "", history, history
                 return
 
             user_msg = msg.strip()
-            agent_input = build_user_message(user_msg, search, content)
+            agent_input = build_user_message(user_msg, search)
 
             # 1) 先展示「正在思考」占位，提升交互反馈（仅更新显示，不写入历史）
             thinking = list(history) + [
@@ -371,12 +373,12 @@ def create_ui():
 
         send_btn.click(
             respond,
-            [msg_input, chat_history, enable_search, file_content],
+            [msg_input, chat_history, enable_search],
             [msg_input, chatbot, chat_history],
         )
         msg_input.submit(
             respond,
-            [msg_input, chat_history, enable_search, file_content],
+            [msg_input, chat_history, enable_search],
             [msg_input, chatbot, chat_history],
         )
 

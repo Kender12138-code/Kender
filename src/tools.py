@@ -79,3 +79,38 @@ def get_current_date() -> str:
     now = datetime.now()
     weekdays = ["一", "二", "三", "四", "五", "六", "日"]
     return f"今天是{now.year}年{now.month}月{now.day}日，星期{weekdays[now.weekday()]}。"
+
+
+def retrieve_document(query: str, k: int = 4) -> ToolResponse:
+    """从用户已上传的本地文档中检索与问题最相关的片段（真正的 RAG 检索）。
+
+    当用户的问题涉及之前上传过的文档内容（例如"根据我上传的文档…"、
+    "我的简历里写了什么"、"总结一下我上传的文档"、"文档里提到的 XX 是什么"）时，
+    应该调用本工具从向量库中检索最相关的片段，再结合片段回答。如果用户尚未上传
+    任何文档，本工具会提示其先上传 TXT / DOCX / PDF 文件。
+
+    注意：本工具基于 FAISS 向量检索（分块 + DashScope Embedding），与联网搜索
+    search_web 是两套独立能力，请按问题性质选择调用。
+
+    Args:
+        query: 要检索的问题或关键词。
+        k: 返回的文档片段数量，默认 4 条。
+
+    Returns:
+        ToolResponse: 检索到的文档片段（或提示用户先上传文档）。content 使用
+        字典列表，与 AgentScope 内部对 TextBlock 的序列化格式保持一致。
+    """
+    from .rag import retrieve, index_exists
+
+    if not index_exists():
+        text = "你还没有上传任何文档，无法检索。请先在界面左侧上传 TXT / DOCX / PDF 文档。"
+        return ToolResponse(content=[{"type": "text", "text": text}])
+
+    chunks = retrieve(query, k=k)
+    if not chunks:
+        text = "在已上传的文档中没有检索到相关内容。"
+    else:
+        output = [f"【文档片段 {i + 1}】\n{c}\n" for i, c in enumerate(chunks)]
+        text = "\n".join(output)
+
+    return ToolResponse(content=[{"type": "text", "text": text}])

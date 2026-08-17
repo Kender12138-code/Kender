@@ -18,7 +18,7 @@
 | 💬 多轮对话 | 基于 ReAct Agent，上下文连贯，支持 Web / CLI 双界面 |
 | 🧠 跨会话记忆 | 自动记住你的名字、学校、目标等事实，持久化到本地 JSON，下次启动仍记得 |
 | 🔧 工具调用（联网搜索） | 注册为 Agent 工具，由模型**自主决定**何时调用 `search_web`，而非关键词匹配 |
-| 📄 文档解析 | 支持 TXT / DOCX / PDF，Web 界面上传后注入上下文再问答 |
+| 📄 文档解析（真 RAG） | 上传 TXT / DOCX / PDF 后自动分块建向量库，模型自主检索相关片段 |
 | 🌱 持续认知（key_facts） | 每轮对话后抽取你表达的事实/偏好，回灌到 system prompt，越聊越个性化 |
 | 🐳 容器化部署 | 内置 Dockerfile，可一键打包为镜像部署 |
 | 🌊 流式输出 | 回复以打字机式逐字呈现，体感接近实时流式（前端 incremental rendering） |
@@ -153,11 +153,11 @@ docker run --env-file .env -p 7860:7860 kender
 
 `search_web` 通过 `toolkit.register_tool_function(search_web)` 注册为 Agent 工具。框架会读取函数的**类型注解 + docstring** 自动生成工具 schema；用户在对话中提到最新资讯、天气、新闻等需求时，Agent 会**自主决定**调用该工具，而非依赖硬编码匹配。
 
-**2. 文档解析 = 上下文注入（非 RAG）**
+**2. 文档解析 = 真 RAG（分块 + Embedding + FAISS 检索）**
 
-`read_document` 不注册为 Agent 工具——模型无法感知本地文件路径，因此由 Web 界面在用户上传文件时预处理，将文档内容**直接拼入本轮消息**（默认截取前 3000 字符）。
+`read_document` 不注册为 Agent 工具——模型无法感知本地文件路径，因此由 Web 界面在用户上传文件时，调用 `src/rag.py` 把文档**分块 → DashScope `text-embedding-v3` 向量化 → 写入 FAISS 本地索引**（持久化到 `data/faiss_index`）。回答阶段，框架通过 `toolkit.register_tool_function(retrieve_document)` 把检索注册为 Agent 工具，模型**自主决定**何时从已上传文档中检索相关片段（与 `search_web` 联网搜索是两套独立能力，按问题性质择一调用）。
 
-> 📌 这是**上下文注入（Context Injection）**，不是 RAG：本项目没有向量库、没有检索环节，文档内容整体进入 prompt。若需真正的 RAG（分块 + Embedding + 检索），可参考同仓库的 `kender_rag_demo` / `langgraph_rag_demo`。
+> 📌 这是**真正的 RAG**：有分块、有向量库、有「问题 → top-k 片段」的检索环节，而不是把全文塞进 prompt 的上下文注入。同仓库保留 `kender_rag_demo`（LangChain 版）与 `langgraph_rag_demo`（LangGraph 版）作为横向对比参考。
 
 **3. 持续认知（key_facts）**
 
@@ -178,6 +178,7 @@ Web 界面在拿到模型完整回复后，将文本**逐字（每帧约 3 字�
 - [x] Docker 容器化部署
 - [x] 多轮连贯由 AgentScope 内部记忆保证；本项目聚焦长期记忆（key_facts / user_name）持久化
 - [x] 流式输出（前端 incremental rendering，打字机式逐字呈现）
+- [x] 真 RAG（分块 + DashScope Embedding + FAISS 检索，retrieve_document 注册为 Agent 工具由模型自主调用）
 - [ ] 真 token 级 streaming（需改写 AgentScope 调用层以支持流式 ReAct 循环）
 - [ ] FastAPI 后端 + 前端分离部署
 - [ ] 更完整的单元测试覆盖 agent / tools
