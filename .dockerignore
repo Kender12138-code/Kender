@@ -1,0 +1,6 @@
+.env
+data/kender_memory.json
+__pycache__/
+*.pyc
+.git
+.gitignore

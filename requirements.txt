@@ -1,0 +1,12 @@
+# 核心依赖（版本已锁定范围，避免 clone 后装到不兼容版本导致运行失败）
+# Gradio 6 移除了大量旧 API（Chatbot 的 type/bubble_full_width/show_copy_button、
+# Blocks 构造器的 theme/css 参数等），本项目代码按 Gradio 6 编写，必须用 >=6.0.0
+gradio>=6.0.0
+# AgentScope 的 ToolResponse / ReActAgent API 跨主版本差异较大，锁定 <2.0.0 防破坏性变更
+agentscope>=1.0.0,<2.0.0
+python-dotenv>=1.0.0
+ddgs>=9.0.0
+python-docx>=1.0.0
+PyPDF2>=3.0.0
+# 开发 / 测试依赖
+pytest>=8.0.0
