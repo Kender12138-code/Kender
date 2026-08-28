@@ -18,101 +18,132 @@ HEADER_HTML = """
 
 FOOTER_HTML = """
 <div class="kender-footer">
-  🔧 Kender · 由 <b>AgentScope</b> + <b>Gradio</b> 构建 · 对话内容仅保存在本地
+  Kender · 基于 AgentScope + Gradio 构建 · 对话内容仅保存在本地
 </div>
 """
 
-# ===================== 自定义样式与主题 =====================
+# ===================== 自定义样式与主题（豆包方向：极简、干净、扁平） =====================
 # 注意：Gradio 6 要求 theme / css 在 launch() 中传入，而非 Blocks() 构造器。
 KENDER_CSS = """
-/* 注：不引入外部 Google Fonts，避免网络抽风导致页面长时间"加载中"。
-   系统字体栈已覆盖 Windows/macOS/Linux 的中文与西文显示。 */
+/* 豆包风格核心：纯白底、少阴影、轻圆角、纯色按钮 */
 .gradio-container {
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif !important;
-  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 45%, #ecfeff 100%) !important;
-  max-width: 1180px !important;
+  background: #ffffff !important;
+  max-width: 1200px !important;
   margin: 0 auto !important;
-  padding-top: 14px !important;
+  padding-top: 12px !important;
 }
 
-/* 品牌头部 */
+/* 品牌头部：极简白底 + 细灰线，更像豆包顶部导航 */
 .kender-header {
-  background: linear-gradient(120deg, #6366f1 0%, #06b6d4 100%);
-  border-radius: 18px;
-  padding: 22px 28px;
-  color: #fff;
-  box-shadow: 0 14px 34px rgba(99, 102, 241, 0.28);
-  margin-bottom: 18px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
+  padding: 16px 24px;
+  color: #111827;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
-.kender-logo { font-size: 28px; font-weight: 800; letter-spacing: 0.5px; }
-.kender-tagline { margin-top: 6px; font-size: 13.5px; opacity: 0.92; }
+.kender-logo { font-size: 20px; font-weight: 700; letter-spacing: -0.2px; color: #4f46e5; }
+.kender-tagline { font-size: 13px; color: #6b7280; }
 
 /* 页脚 */
 .kender-footer {
   text-align: center;
   font-size: 12px;
-  color: #64748b;
-  margin-top: 16px;
-  padding-bottom: 8px;
+  color: #9ca3af;
+  margin-top: 24px;
+  padding-bottom: 16px;
 }
 
-/* 侧边栏卡片 */
+/* 侧边栏：浅灰分隔，无阴影 */
 .kender-sidebar {
-  background: #fff !important;
-  border-radius: 18px !important;
-  padding: 18px 16px !important;
-  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06) !important;
-  border: 1px solid rgba(99, 102, 241, 0.08) !important;
+  background: #f9fafb !important;
+  border-radius: 0 !important;
+  padding: 16px 14px !important;
+  border-right: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
 }
+
+/* 主内容区 */
+.kender-main { padding: 0 8px !important; }
 
 /* 聊天气泡容器 */
 .kender-chat {
-  border-radius: 18px !important;
-  border: 1px solid rgba(99, 102, 241, 0.12) !important;
-  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06) !important;
-  background: #fff !important;
+  border-radius: 20px !important;
+  border: 1px solid #e5e7eb !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
 }
+.kender-chat .message-wrap { padding: 10px 16px !important; }
 .kender-chat .message-wrap.user > .message {
-  background: linear-gradient(120deg, #6366f1, #818cf8) !important;
-  color: #fff !important;
+  background: #4f46e5 !important;
+  color: #ffffff !important;
+  border-radius: 18px 18px 4px 18px !important;
+  box-shadow: none !important;
 }
 .kender-chat .message-wrap.bot > .message {
-  background: #f1f5f9 !important;
-  color: #0f172a !important;
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+  border-radius: 18px 18px 18px 4px !important;
+  box-shadow: none !important;
 }
 
-/* 发送按钮 */
+/* 发送按钮：纯色、更柔和 */
 .kender-send {
-  background: linear-gradient(120deg, #6366f1, #06b6d4) !important;
+  background: #4f46e5 !important;
   color: #fff !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
   border: none !important;
-  border-radius: 14px !important;
-  box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  transition: background 0.15s ease, transform 0.05s ease;
 }
-.kender-send:hover { filter: brightness(1.06); }
+.kender-send:hover { background: #4338ca !important; }
+.kender-send:active { transform: scale(0.98); }
 
-/* 输入框 */
+/* 输入框：浅灰底、大圆角 */
 .kender-input textarea {
-  border-radius: 14px !important;
-  border: 1px solid rgba(99, 102, 241, 0.25) !important;
+  border-radius: 18px !important;
+  border: 1px solid #e5e7eb !important;
+  background: #f9fafb !important;
   font-size: 15px !important;
+  padding: 12px 16px !important;
 }
 .kender-input textarea:focus {
-  border-color: #6366f1 !important;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+  border-color: #4f46e5 !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1) !important;
 }
 
 /* 文件框 */
-.kender-file { border-radius: 14px !important; }
-
-/* 示例区 */
-.kender-examples .examples {
-  border-radius: 12px !important;
-  border: 1px dashed rgba(99, 102, 241, 0.35) !important;
-  background: #faf5ff !important;
+.kender-file {
+  border-radius: 14px !important;
+  border: 1px dashed #d1d5db !important;
+  background: #f9fafb !important;
 }
+
+/* 示例区：pill 小按钮 */
+.kender-examples .examples {
+  border-radius: 999px !important;
+  border: 1px solid #e5e7eb !important;
+  background: #ffffff !important;
+  color: #374151 !important;
+  font-size: 13px !important;
+  padding: 6px 14px !important;
+  margin: 4px 6px 4px 0 !important;
+  transition: all 0.15s ease;
+}
+.kender-examples .examples:hover {
+  background: #f3f4f6 !important;
+  border-color: #d1d5db !important;
+}
+
+/* 推理轨迹面板：更克制 */
+.kender-trace { border-color: #e5e7eb !important; }
 """
 
 
@@ -261,10 +292,10 @@ def create_ui():
                 mcp_status = gr.Markdown("🔌 工具接入：初始化中…")
 
             # ================= 主聊天区 =================
-            with gr.Column(scale=4):
+            with gr.Column(scale=4, elem_classes="kender-main"):
                 chatbot = gr.Chatbot(
                     label="",
-                    height=540,
+                    height=620,
                     elem_classes="kender-chat",
                     value=[],
                 )
@@ -273,7 +304,7 @@ def create_ui():
 
                 # ReAct 推理轨迹：把"思考 → 行动 → 观察"展示出来，
                 # 让 Agent 的离散化决策过程可见（面试时可直接指着讲）
-                with gr.Accordion("🔍 推理轨迹与质量审核（思考 → 行动 → 观察）", open=False):
+                with gr.Accordion("🔍 推理轨迹与质量审核（思考 → 行动 → 观察）", open=False, elem_classes="kender-trace"):
                     trace_md = gr.Markdown(
                         "*发一条消息，这里会显示 Kender 这一轮的推理过程，"
                         "以及 Critic 审核Agent 给出的结论*"
@@ -298,7 +329,7 @@ def create_ui():
                         container=False,
                     )
                     send_btn = gr.Button(
-                        "🚀 发送",
+                        "发送",
                         variant="primary",
                         scale=2,
                         elem_id="kender-send-btn",
@@ -316,6 +347,7 @@ def create_ui():
                         "你记得我之前跟你说过什么吗？",
                     ],
                     inputs=msg_input,
+                    elem_classes="kender-examples",
                 )
 
         gr.HTML(FOOTER_HTML)
