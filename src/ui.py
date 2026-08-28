@@ -126,22 +126,6 @@ KENDER_CSS = """
   background: #f9fafb !important;
 }
 
-/* 示例区：pill 小按钮 */
-.kender-examples .examples {
-  border-radius: 999px !important;
-  border: 1px solid #e5e7eb !important;
-  background: #ffffff !important;
-  color: #374151 !important;
-  font-size: 13px !important;
-  padding: 6px 14px !important;
-  margin: 4px 6px 4px 0 !important;
-  transition: all 0.15s ease;
-}
-.kender-examples .examples:hover {
-  background: #f3f4f6 !important;
-  border-color: #d1d5db !important;
-}
-
 /* 推理轨迹面板：更克制 */
 .kender-trace { border-color: #e5e7eb !important; }
 """
@@ -347,7 +331,6 @@ def create_ui():
                         "你记得我之前跟你说过什么吗？",
                     ],
                     inputs=msg_input,
-                    elem_classes="kender-examples",
                 )
 
         gr.HTML(FOOTER_HTML)
