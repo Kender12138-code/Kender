@@ -14,6 +14,8 @@ faiss-cpu>=1.7.0
 numpy>=1.24.0
 # 开发 / 测试依赖
 pytest>=8.0.0
-mcp>=1.0.0
+# MCP 协议：AgentScope 1.0.21 只兼容 1.x，装 2.x 会报
+# ImportError: cannot import name 'streamablehttp_client' from 'mcp.client.streamable_http'
+mcp>=1.0.0,<2.0.0
 fastapi>=0.110.0
 uvicorn>=0.27.0
