@@ -4,68 +4,119 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![Gradio](https://img.shields.io/badge/Gradio-6.x-ff69b4.svg)
 ![AgentScope](https://img.shields.io/badge/AgentScope-1.x-orange.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-服务化-009688.svg)
+![MCP](https://img.shields.io/badge/MCP-工具协议-8b5cf6.svg)
 
-基于 [AgentScope](https://github.com/modelscope/agentscope) 框架与通义千问大模型构建的**可对话、可联网、能记住你的** AI 生活助手。它不仅是个聊天机器人，更是一个具备**工具调用（ReAct）能力**和**跨会话长期记忆**的 Agent。
+基于 [AgentScope](https://github.com/modelscope/agentscope) 框架与通义千问大模型构建的**可对话、可联网、能记住你的** AI 生活助手。
 
-> 适用场景：日常问答、联网查最新资讯、解析本地文档，并且能随着和你对话次数的增多而越来越"懂你"。
+它不只是一个聊天机器人，而是一个具备完整 Agent 工程链路的系统：**ReAct 自主工具调用 → 参数填槽 → 结构化输出校验 → 多 Agent 质量审核 → 跨会话长期记忆**，工具层同时支持**进程内 Function Call** 与**独立进程的 MCP Server** 两种接入方式。
+
+> 适用场景：日常问答、联网查最新资讯、解析本地文档、管理提醒事项，并且能随着和你对话次数的增多而越来越"懂你"。
 
 ---
 
 ## ✨ 核心功能
 
+### 基础能力
+
 | 功能 | 说明 |
 | --- | --- |
-| 💬 多轮对话 | 基于 ReAct Agent，上下文连贯，支持 Web / CLI 双界面 |
+| 💬 多轮对话 | 基于 ReAct Agent，上下文连贯，支持 Web / CLI / HTTP API 三种入口 |
 | 🧠 跨会话记忆 | 自动记住你的名字、学校、目标等事实，持久化到本地 JSON，下次启动仍记得 |
-| 🔧 工具调用（联网搜索） | 注册为 Agent 工具，由模型**自主决定**何时调用 `search_web`，而非关键词匹配 |
+| 🔧 工具调用（联网搜索） | 由模型**自主决定**何时调用 `search_web`，而非关键词硬匹配 |
+| 🌤️ 天气查询 | `get_weather` 实时天气，缺城市时会主动追问而非瞎猜 |
 | 📄 文档解析（真 RAG） | 上传 TXT / DOCX / PDF 后自动分块建向量库，模型自主检索相关片段 |
 | 🌱 持续认知（key_facts） | 每轮对话后抽取你表达的事实/偏好，回灌到 system prompt，越聊越个性化 |
+| 🌊 流式输出 | 回复以打字机式逐字呈现（前端 incremental rendering） |
+
+### 工程化能力（P0 / P1 阶段新增）
+
+| 功能 | 说明 |
+| --- | --- |
+| 🎯 **参数填槽（Slot Filling）** | 工具必填参数缺失时，模型**必须先追问**而不是猜默认值。去掉参数默认值 + sys_prompt 双重约束 |
+| 🛡️ **Pydantic 结构化校验** | 记忆抽取、质量审核的输出都用 Pydantic 模型强制约束，解析失败自动重试 / 降级 |
+| 🔍 **ReAct 轨迹可视化** | Web 界面折叠面板展示每一步「思考 → 行动 → 观察」，工具调用过程不再是黑盒 |
+| ⚖️ **Critic 质量审核（多 Agent 协作）** | 生成 → 审核 → 不合格打回重写（最多 2 轮）。审核时把工具返回内容一并喂给 Critic 用于识别编造 |
+| 🔌 **MCP 工具接入** | 提醒能力由**独立进程的 MCP Server** 提供，走 streamable-http 协议；接入失败自动降级为进程内工具 |
+| ✍️ **Query 改写** | RAG 检索前把问题改写成多条同义语句分别检索后合并去重，提升召回率；小语料自动跳过以省 token |
+| 🚀 **FastAPI 服务化** | 独立 HTTP 服务，暴露 `/chat` 与 `/health`，自带 Swagger 文档；初始化放进 lifespan 保证与 MCP 同处一个事件循环 |
 | 🐳 容器化部署 | 内置 Dockerfile，可一键打包为镜像部署 |
-| 🌊 流式输出 | 回复以打字机式逐字呈现，体感接近实时流式（前端 incremental rendering） |
 
 ---
 
 ## 💡 示例对话
 
-> 以下为功能示意（建议运行后替换为真实截图）。
+### 联网搜索
 
 **👤 用户**：帮我查一下今天 A 股大盘行情。
-**🤖 Kender**：（自动调用 `search_web`）根据最新检索，今日 A 股三大指数……
+**🤖 Kender**：（自主调用 `search_web`）根据最新检索，今日 A 股三大指数……
+
+### 长期记忆
 
 **👤 用户**：记一下，我正在准备 Agent 开发岗的面试。
 **🤖 Kender**：好的，我已经记住啦。后续聊到相关话题时我会结合这个背景。
 
-**👤 用户**：那你能基于我刚上传的简历 PDF 帮我改下自我介绍吗？
-**🤖 Kender**：（结合文档上下文注入）根据你的简历，你的自我介绍可以这样组织……
+### 参数填槽（缺参数时追问，不瞎猜）
+
+**👤 用户**：今天天气怎么样？
+**🤖 Kender**：你想查哪个城市的天气呢？
+**👤 用户**：上海。
+**🤖 Kender**：（调用 `get_weather(city="上海")`）上海今天……
+
+### MCP 工具（提醒事项）
+
+**👤 用户**：提醒我明天上午 9 点交实习周报。
+**🤖 Kender**：（通过 MCP Server 调用 `add_reminder`）提醒已创建成功。当前共有 1 条提醒：明天上午 9 点 —— 交实习周报。
+
+### 真 RAG 检索
+
+**👤 用户**：我上传的简历里，项目经历写了什么？
+**🤖 Kender**：（自主调用 `retrieve_document`，必要时先做 query 改写）根据你的简历，项目经历部分写了……
 
 ---
 
 ## 🏗️ 架构
 
 ```text
-            ┌─────────────────────────────────────────┐
-            │                  UI 层                    │
-            │   Gradio Web (默认 7860)  /  CLI 交互     │
-            └───────────────┬─────────────────────────┘
-                            │ 用户消息
-                            ▼
-            ┌─────────────────────────────────────────┐
-            │              Agent 层 (ReAct)             │
-            │  system prompt (含 key_facts 回灌)         │
-            │      ↓ 模型决策                           │
-            │  是否调用工具？ ── 是 ──▶ Toolkit 执行     │
-            └───────────────┬─────────────────────────┘
-                            │            │
-                            │            ▼
-              ┌─────────────┴──┐   ┌──────────────────┐
-              │  记忆系统       │   │   工具层          │
-              │ key_facts 抽取 │   │ search_web        │
-              │ 持久化 JSON    │   │ read_document     │
-              └────────────────┘   │ get_current_date  │
-                                   └──────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                        接入层                             │
+│   Gradio Web (7860)  │  CLI  │  FastAPI HTTP (8002)       │
+└──────────────┬───────────────────────────────────────────┘
+               │ 用户消息
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│                    Agent 层（ReAct）                       │
+│   system prompt（含 key_facts 回灌 + 填槽规则）             │
+│        ↓ 模型决策                                          │
+│   是否调用工具？── 是 ──▶ Toolkit 执行                      │
+│        │                                                   │
+│        └─ 否（闲聊 / 追问用户）──▶ 直接返回                  │
+└──────────────┬───────────────────────────────────────────┘
+               │ 生成回答
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│              Critic 层（评审式多 Agent 协作）               │
+│   Critic 拿到「用户问题 + 工具返回 + 回答」三方对照          │
+│        ├─ PASS ──▶ 返回用户                                │
+│        └─ FAIL ──▶ 把批评意见回灌给 Generator 重写（≤2 轮）  │
+└──────────────────────────────────────────────────────────┘
+
+   工具层                          记忆层
+   ┌────────────────────┐        ┌────────────────────┐
+   │ 进程内 Function Call │        │ 短期：ReActAgent    │
+   │  · search_web       │        │       内部消息累积   │
+   │  · get_weather      │        │ 长期：user_name +   │
+   │  · retrieve_document│        │   key_facts → JSON  │
+   ├────────────────────┤        └────────────────────┘
+   │ MCP Server (8100)   │
+   │  · add_reminder     │  ← 独立进程，streamable-http
+   │  · list_reminders   │     失败自动降级为进程内工具
+   └────────────────────┘
 ```
 
-**核心数据流**：用户消息 → Agent 拼装（记忆 + 系统提示）→ 模型推理 → 必要时调用工具 → 生成回复 → 后台抽取 key_facts 写回记忆。
+**核心数据流**：用户消息 → Agent 拼装（记忆 + 系统提示）→ 模型推理 → 必要时调用工具 → Critic 审核 → 生成回复 → 后台抽取 key_facts 写回记忆。
+
+**端口占用**：Web `7860` ｜ FastAPI `8002` ｜ MCP Server `8100`（可用 `KENDER_MCP_PORT` 覆盖）
 
 ---
 
@@ -73,23 +124,34 @@
 
 ```text
 kender/
-├── main.py              # 入口：--web 启动 Web UI，否则启动 CLI
-├── requirements.txt     # 依赖清单
-├── Dockerfile           # 容器化构建
+├── main.py                    # 入口：--web 启动 Web UI，否则启动 CLI
+│                              #   默认绑 127.0.0.1（本地用），读 GRADIO_SERVER_NAME 环境变量
+├── app.py                     # 公网部署入口：默认绑 0.0.0.0:7860（Docker / HuggingFace Spaces 用）
+├── server.py                  # FastAPI 服务化：POST /chat、GET /health
+├── requirements.txt           # 依赖清单
+├── Dockerfile                 # 容器化构建
 ├── .dockerignore
-├── .env.example         # 环境变量模板（复制为 .env 并填入 key）
+├── .env.example               # 环境变量模板（复制为 .env 并填入 key）
 ├── .gitignore
-├── LICENSE            # MIT 开源协议
+├── LICENSE                    # MIT 开源协议
 ├── src/
-│   ├── agent.py         # ReActAgent 构建 + 工具注册 + 回复逻辑 + key_facts 抽取
-│   ├── tools.py         # 工具函数：search_web / read_document / get_current_date
-│   ├── memory.py        # 记忆的加载 / 保存 / 提示词拼装
-│   ├── ui.py            # Gradio Web 界面
+│   ├── agent.py               # ReActAgent 构建 + 工具注册 + Critic 审核 + MCP 接入 + 记忆抽取
+│   ├── tools.py               # 工具函数：search_web / get_weather / retrieve_document
+│   │                          #            + query 改写 + 降级用 set_reminder
+│   ├── memory.py              # 记忆的加载 / 保存 / 提示词拼装
+│   ├── rag.py                 # 文档分块 + DashScope Embedding + FAISS 索引与检索
+│   ├── ui.py                  # Gradio Web 界面（含 ReAct 轨迹面板）
 │   └── __init__.py
-├── data/
-│   └── kender_memory.json  # 运行时自动生成，已被 .gitignore 忽略
+├── mcp_server/
+│   └── reminder_server.py     # 独立进程 MCP Server：add_reminder / list_reminders
+├── data/                      # 运行时自动生成，已被 .gitignore 忽略
+│   ├── kender_memory.json     #   长期记忆
+│   ├── reminders.json         #   提醒事项
+│   ├── faiss_index/           #   RAG 向量库
+│   └── mcp_server.log         #   MCP Server 日志
 └── tests/
-    └── test_smoke.py    # 冒烟测试（记忆读写 / 工具返回类型，无需联网）
+    ├── test_memory.py         # 记忆读写测试
+    └── test_smoke.py          # 冒烟测试（工具返回类型等，无需联网）
 ```
 
 ---
@@ -168,12 +230,28 @@ nano .env             # 填入你的 DASHSCOPE_API_KEY
 
 > ⚠️ `.env` 已被 `.gitignore` 忽略，**千万不要手动把它加进 git 提交**。提交前请用 `git status` 确认绿色列表里没有 `.env`。
 
-#### 4. 启动
+#### 4. 启动（三种入口任选）
 
 ```bash
-python main.py --web     # Web 界面（默认 http://127.0.0.1:7860）
-python main.py           # 或命令行交互
+# ① Gradio Web 界面（推荐，带 ReAct 轨迹面板）
+python main.py --web          # 默认 http://127.0.0.1:7860
+
+# ② 命令行交互
+python main.py
+
+# ③ FastAPI HTTP 服务
+python -m uvicorn server:app --port 8002
+#    打开 http://127.0.0.1:8002/docs 看 Swagger 文档
 ```
+
+> 📌 **Web 界面对外开放时**：`main.py` 默认绑定 `127.0.0.1`（只能本机访问）。
+> 需要局域网/公网访问时使用 `app.py`（默认 `0.0.0.0`），或给 `main.py` 设置环境变量 `GRADIO_SERVER_NAME=0.0.0.0`。
+> Dockerfile 中已默认设置该变量，容器部署无需额外配置。
+>
+> ⚠️ **公网部署前务必给 `launch()` 加访问口令**，否则任何人都能打开页面消耗你的 `DASHSCOPE_API_KEY`：
+> ```python
+> demo.launch(auth=("kender", "你的口令"), ...)
+> ```
 
 ### 方式二：Docker 运行
 
@@ -189,57 +267,196 @@ docker run --env-file .env -p 7860:7860 kender
 
 ## 🧰 技术栈
 
-- **Agent 框架**：[AgentScope](https://github.com/modelscope/agentscope)（ReActAgent）
-- **大模型**：DashScope 通义千问 `qwen-plus`
-- **工具系统**：AgentScope Toolkit（`register_tool_function` 注册 `search_web`）
-- **Web UI**：Gradio
-- **联网搜索**：DuckDuckGo（`ddgs`）
-- **文档解析**：python-docx / PyPDF2
+| 层次 | 选型 |
+| --- | --- |
+| Agent 框架 | [AgentScope](https://github.com/modelscope/agentscope)（ReActAgent + Toolkit） |
+| 大模型 | DashScope 通义千问 `qwen-plus` |
+| 工具协议 | [MCP](https://modelcontextprotocol.io/)（streamable-http，独立进程） |
+| 服务化 | FastAPI + Uvicorn |
+| 结构化校验 | Pydantic v2 |
+| Web UI | Gradio 6 |
+| 联网搜索 | DuckDuckGo（`ddgs`） |
+| 文档解析 | python-docx / PyPDF2 |
+| 向量检索 | FAISS + DashScope `text-embedding-v3` |
 
 ---
 
 ## 📌 设计说明
 
-**记忆架构（短期 + 长期）**
+### 1. 记忆架构（短期 + 长期）
 
 - **短期记忆**：由 AgentScope 的 ReActAgent 内部维护（同一 agent 实例跨轮累积消息），保证单会话内多轮连贯。
 - **长期记忆**：本项目额外持久化 `user_name` 与 `key_facts` 到本地 JSON，重启后仍记得你——这是"跨会话记忆"的核心，也是简历上最该讲清楚的设计点。
+- **抽取链路**：每轮对话后用一次 LLM 调用抽取，输出经 Pydantic `UserInfo` 模型校验；解析失败最多重试 2 次，仍失败则降级跳过，**绝不因为记忆抽取失败就让对话崩掉**。
 
-**1. 工具调用（真 ReAct，非关键词匹配）**
+> ⚠️ 这不是模型层面的真正"学习"，而是通过**显式记忆机制**模拟的持续认知能力，面试中表述需实事求是。
 
-`search_web` 通过 `toolkit.register_tool_function(search_web)` 注册为 Agent 工具。框架会读取函数的**类型注解 + docstring** 自动生成工具 schema；用户在对话中提到最新资讯、天气、新闻等需求时，Agent 会**自主决定**调用该工具，而非依赖硬编码匹配。
+### 2. 工具调用（真 ReAct，非关键词匹配）
 
-**2. 文档解析 = 真 RAG（分块 + Embedding + FAISS 检索）**
+`search_web`、`get_weather`、`retrieve_document` 通过 `toolkit.register_tool_function()` 注册为 Agent 工具。框架会读取函数的**类型注解 + docstring** 自动生成工具 schema；模型在推理时**自主决定**是否调用、调用哪个，而非依赖硬编码的关键词匹配。
 
-`read_document` 不注册为 Agent 工具——模型无法感知本地文件路径，因此由 Web 界面在用户上传文件时，调用 `src/rag.py` 把文档**分块 → DashScope `text-embedding-v3` 向量化 → 写入 FAISS 本地索引**（持久化到 `data/faiss_index`）。回答阶段，框架通过 `toolkit.register_tool_function(retrieve_document)` 把检索注册为 Agent 工具，模型**自主决定**何时从已上传文档中检索相关片段（与 `search_web` 联网搜索是两套独立能力，按问题性质择一调用）。
+### 3. 参数填槽（Slot Filling）
+
+**问题**：工具参数给了默认值，模型在用户没说清楚时就会"自作主张"填一个，比如用户问"今天天气怎么样"，模型直接查了北京。
+
+**解法**（双管齐下，缺一不可）：
+
+1. **代码层**：去掉工具函数的参数默认值（`get_weather(city: str)`，不给 `city="北京"`）——没有默认值，模型就没法偷懒。
+2. **Prompt 层**：在 system prompt 里写死填槽规则——"禁止猜测、禁止使用默认值、禁止跳过该参数，必须先向用户追问补全"。
+
+```python
+# src/agent.py 中的 sys_prompt 片段
+【填槽规则】调用任何工具前，先检查必需参数是否齐全。
+如果用户没有提供某个必需参数（例如没说查哪个城市、
+没说提醒什么内容或什么时间），禁止猜测、禁止使用默认值、
+禁止跳过该参数，必须先向用户追问补全，等用户回答后再调用工具。
+```
+
+> 💡 面试点：这个能力同时被 Critic 保护——Critic 的 prompt 里明确写了"助手正在追问必要信息属于合格行为"，否则 Critic 会把正常的追问误判为"答非所问"。
+
+### 4. 文档解析 = 真 RAG（分块 + Embedding + FAISS 检索）
+
+`read_document` **不**注册为 Agent 工具——模型无法感知本地文件路径。因此由 Web 界面在用户上传文件时，调用 `src/rag.py` 把文档**分块（500 字 / 80 字 overlap，中文友好按行聚合）→ DashScope `text-embedding-v3` 向量化 → 写入 FAISS 本地索引**（持久化到 `data/faiss_index`）。
+
+回答阶段，`retrieve_document` 注册为 Agent 工具，模型**自主决定**何时从已上传文档中检索相关片段（与 `search_web` 联网搜索是两套独立能力，按问题性质择一调用）。
 
 > 📌 这是**真正的 RAG**：有分块、有向量库、有「问题 → top-k 片段」的检索环节，而不是把全文塞进 prompt 的上下文注入。同仓库保留 `kender_rag_demo`（LangChain 版）与 `langgraph_rag_demo`（LangGraph 版）作为横向对比参考。
 
-**3. 持续认知（key_facts）**
+### 5. Query 改写（检索增强）
 
-每轮对话后，系统用**一次 LLM 结构化调用**从对话中抽取两类信息：(1) 用户名字；(2) 事实/偏好（如学校、目标、喜好，每条 ≤30 字）。两者均**只抽取用户直接表达的内容、不推测不编造**，去重后写入 `memory["key_facts"]`。下次启动时，这些事实作为 system prompt 的一部分回灌，使 Agent 能基于历史给出更个性化的回复。
+单一问法容易漏召回。检索前先用模型把问题改写成 3 条**表述不同但语义相同**的语句，分别检索后合并去重（按片段前 80 字符判重）。
 
-> ⚠️ 注意：这不是模型层面的真正"学习"，而是通过**显式记忆机制**模拟的持续认知能力，面试中表述需实事求是。
+**成本权衡**：语料规模小于 8 个片段时跳过改写——小语料下原始问题通常已经能命中，改写只会白白多花一次 LLM 调用。
 
-**4. 流式输出（前端 incremental rendering）**
+```python
+# src/tools.py
+total = chunk_count()
+if total >= REWRITE_MIN_CHUNKS:      # REWRITE_MIN_CHUNKS = 8
+    queries = [query] + [q for q in await expand_query(query) if q != query]
+else:
+    queries = [query]
+```
 
-Web 界面在拿到模型完整回复后，将文本**逐字（每帧约 3 字）增量渲染**到对话气泡，配合「正在思考」占位，体感上接近实时流式输出，明显改善交互等待感。
+改写失败（JSON 解析异常等）自动降级为 `[原问题]`——**优化不能拖垮主链路**。
 
-> 📌 说明：AgentScope 的 `ReActAgent.reply()` 为聚合返回（内部虽有 `async for` 流式 chunk，但不向外暴露），因此这里采用**前端增量 reveal** 而非模型 token 级 streaming。后端 ReAct 工具调用、长期记忆等能力保持不变，零回归风险。若需真 token 级流式，需改写 Agent 调用层以支持流式 ReAct 循环（见后续计划）。
+### 6. Critic 质量审核（评审式多 Agent 协作）
+
+单靠 prompt 约束不住模型，就再加一道**后置检查点**：一个 Agent 生成（Generator），另一个审核（Critic）。
+
+```text
+第 1 次生成 → Critic 审核
+    ├─ PASS → 返回用户
+    └─ FAIL → 把批评意见回灌给 Generator 重写（最多 2 轮）
+```
+
+**三个关键设计**：
+
+1. **Critic 必须看到工具返回内容**。只看最终回答，Critic 无从判断"有没有编造"；把 ReAct 轨迹（Observation）一并喂给它，才能识破数据捏造。
+2. **输出用 Pydantic 强制结构化**（`CriticVerdict: {passed: bool, reason: str}`）。不让模型絮絮叨叨，省 token 也省解析麻烦。
+3. **两个省 token / 保稳定的优化**：
+   - 本轮没调用工具时直接跳过审核（闲聊和追问没有审核价值）
+   - 审核本身出异常时**默认放行**——检查点是"兜底"不是"拦路虎"
+
+> 📌 诚实说明：Critic 与 Generator 复用同一个 `DashScopeChatModel` 实例（都是 `qwen-plus`），只是 prompt 角色不同。它是**评审式的双 Agent 分工**，不是两个独立部署的模型服务。
+
+### 7. MCP 工具接入（协议层）
+
+提醒能力默认由**独立进程的 MCP Server**（`mcp_server/reminder_server.py`）提供，主程序通过 MCP 协议调用，而不是直接 import。
+
+**为什么绕这一层？这正是 MCP 的意义**：
+
+| | 能被调用的范围 |
+| --- | --- |
+| 进程内函数（Function Call） | 只能被本进程、本语言的程序调用 |
+| MCP Server（协议层） | 任何支持 MCP 的客户端都能调用，可换语言实现、可独立部署、可给别人复用 |
+
+> 💡 **面试关键区分**：Function Call 是**实现层**（模型自主决策 + 结构化调用），MCP 是**协议层**（定义工具怎么被发现和接入）。二者不是一回事，混为一谈会被扣分。
+
+**两个传输方式的选择**：
+
+- `stdio`（默认）：CLI 单任务场景可用
+- `streamable-http`（`--http 8100`）：**Web 服务必须用**
+
+为什么 Web 不能用 stdio？因为 stdio 客户端会在调用方所在的 asyncio task 里创建 anyio cancel scope；Web 服务里「建立连接」在启动阶段（lifespan）、「调用工具」在请求处理阶段，两者是不同 task，anyio 会直接抛：
+
+```
+RuntimeError: Attempted to exit cancel scope in a different task
+              than it was entered in
+```
+
+**降级设计**：MCP 是"增强"不是"依赖"。连接失败时自动把进程内的 `set_reminder` 补注册回来，提醒能力不消失，整个 Agent 不受影响。可用 `KENDER_ENABLE_MCP=0` 主动关闭。
+
+### 8. ReAct 轨迹可视化
+
+Web 界面底部有折叠面板「🔍 推理轨迹与质量审核（思考 → 行动 → 观察）」，展示每一轮：
+
+- 模型调用了哪些工具、传了什么参数
+- 工具返回了什么（Observation）
+- Critic 的审核结论（PASS/FAIL + 原因 + 第几轮通过）
+
+**为什么值得做**：工具调用过程本来是黑盒，模型"想了什么、查了什么、为什么这么答"全看不见。可视化之后，调试效率大幅提升，演示时也能直观证明"这是真 ReAct，不是关键词匹配"。
+
+### 9. FastAPI 服务化
+
+`server.py` 把 Kender 从"终端对话"变成"HTTP 对话"：
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /chat` | 发一句话，返回 `{reply, trace, review:{passed, reason, rounds}}` |
+| `GET /health` | 健康检查，方便运维探活 |
+
+启动：`python -m uvicorn server:app --port 8002`，Swagger 文档在 `/docs`。
+
+**关键设计：初始化放进 `lifespan`**。原来 memory / agent 写在模块顶层，接入 MCP 后不行了——MCP 客户端会绑定到一个具体的事件循环上，而模块顶层还没有循环；老版本在每个请求里 `asyncio.run()` 新建循环，会导致「A 循环里连接、B 循环里调用」必然报错。放进 lifespan 后，初始化和请求都跑在 uvicorn 的同一个循环里。
+
+### 10. 流式输出（前端 incremental rendering）
+
+Web 界面在拿到模型完整回复后，将文本**逐字（每帧约 3 字）增量渲染**到对话气泡，配合「正在思考」占位，体感上接近实时流式输出。
+
+> 📌 说明：AgentScope 的 `ReActAgent.reply()` 为聚合返回（内部虽有 `async for` 流式 chunk，但不向外暴露），因此这里采用**前端增量 reveal** 而非模型 token 级 streaming。若需真 token 级流式，需改写 Agent 调用层以支持流式 ReAct 循环（见后续计划）。
+
+---
+
+## ⚠️ 已知限制与边界
+
+诚实列出当前版本的取舍，这也是面试中该主动说清的部分：
+
+| 项目 | 现状 |
+| --- | --- |
+| 流式输出 | 前端 reveal，**不是**模型 token 级 streaming |
+| Critic 独立性 | 与 Generator 复用同一模型实例，靠 prompt 切换角色，不是独立部署的第二个模型服务 |
+| MCP Server | 本地子进程 + 本机 HTTP，**不是**远程服务；主进程退出后需自行管理 |
+| 多 Agent 协作层级 | 当前是**评审式**（Generator + Critic），尚未做到上下级式（Planner + 多 Worker 分工） |
+| 长期记忆 | 全量 key_facts 回灌 system prompt，未做向量检索式的记忆召回，规模变大后需优化 |
+| RAG 检索 | 纯向量检索，未做混合检索（BM25 + 向量）与重排序（rerank） |
+| CLI 模式 | 不带 Critic 审核（调用 `get_reply`），只有 Web 与 API 走 `get_reply_with_review` |
+| 并发 | 单实例，未做请求队列与多会话隔离 |
 
 ---
 
 ## 🔧 后续计划
 
 - [x] Docker 容器化部署
-- [x] 多轮连贯由 AgentScope 内部记忆保证；本项目聚焦长期记忆（key_facts / user_name）持久化
-- [x] 流式输出（前端 incremental rendering，打字机式逐字呈现）
-- [x] 真 RAG（分块 + DashScope Embedding + FAISS 检索，retrieve_document 注册为 Agent 工具由模型自主调用）
+- [x] 长期记忆（key_facts / user_name）持久化
+- [x] 流式输出（前端 incremental rendering）
+- [x] 真 RAG（分块 + DashScope Embedding + FAISS 检索）
+- [x] 参数填槽（Slot Filling）
+- [x] Pydantic 结构化输出校验
+- [x] ReAct 轨迹可视化
+- [x] Critic 质量审核（评审式多 Agent 协作）
+- [x] MCP 工具接入（独立进程 + streamable-http + 降级）
+- [x] Query 改写（规模阈值控制成本）
+- [x] FastAPI 服务化（lifespan 初始化 + /chat + /health）
 - [ ] 真 token 级 streaming（需改写 AgentScope 调用层以支持流式 ReAct 循环）
-- [ ] FastAPI 后端 + 前端分离部署
+- [ ] 上下级式多 Agent 协作（Planner + 多 Worker 分工，AgentScope `MsgHub` / `sequential_pipeline`）
+- [ ] RAG 混合检索（BM25 + 向量）与重排序（rerank）
+- [ ] 长期记忆的向量化召回（当前全量回灌，规模变大后需优化）
 - [ ] 更完整的单元测试覆盖 agent / tools
+
+---
 
 ## 📑 配套文档
 
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — 三种部署/演示方案（HuggingFace Spaces 公网部署 / 本地录屏 GIF / Docker），让面试官点开即用。
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — 部署/演示方案，让面试官点开即用。
 - [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) — 逐模块代码讲解稿与高频面试追问预设，帮助把项目讲清楚。
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发约定。
