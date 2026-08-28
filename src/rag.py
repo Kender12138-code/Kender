@@ -130,6 +130,21 @@ def index_exists(index_dir: str = DEFAULT_INDEX_DIR) -> bool:
     return (base / "index.faiss").exists() and (base / "chunks.json").exists()
 
 
+def chunk_count(index_dir: str = DEFAULT_INDEX_DIR) -> int:
+    """返回向量库里的文本块总数。
+
+    用途：判断语料规模是否值得做 query 改写。
+    小语料下原始问题往往已经能直接命中，改写只会白白多花一次 LLM 调用。
+    """
+    if not index_exists(index_dir):
+        return 0
+    try:
+        with open(os.path.join(index_dir, "chunks.json"), encoding="utf-8") as f:
+            return len(json.load(f))
+    except Exception:
+        return 0
+
+
 def retrieve(query: str, k: int = 4, index_dir: str = DEFAULT_INDEX_DIR):
     """从已构建的向量库中检索与 query 最相关的 k 个文本块。
 

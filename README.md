@@ -107,14 +107,70 @@ kender/
 > ✅ 验证：输入 `dir`（Windows）或 `ls`（Mac/Linux），能看到 `requirements.txt`、`main.py` 再继续。
 > （如果本项目已经是单独打开 / 克隆的仓库根目录，可跳过 cd。）
 
+#### 1. 准备 Python 虚拟环境
+
+推荐使用虚拟环境，避免和系统 Python 的依赖打架。下面两种方式任选其一。
+
+**方式 A：用 VS Code 推荐的 WorkBuddy managed venv（推荐，已预装好依赖）**
+
+如果你已经在 WorkBuddy 的默认 venv 里跑通过本项目，直接让 VS Code 指向它：
+
+1. 打开 VS Code，按 `Ctrl+Shift+P`；
+2. 输入并选择 `Python: Select Interpreter`；
+3. 选择路径：
+   ```
+   C:\Users\10215\.workbuddy\binaries\python\envs\default\Scripts\python.exe
+   ```
+   如果列表里没有，选 `Enter interpreter path...`，把上面路径贴进去；
+4. 关掉当前终端，按 `` Ctrl+` `` 重新开一个，右下角状态栏应该显示类似 `Python 3.13.x ('default')`。
+
+**方式 B：给 Kender 单独建一个 venv（想自动激活就用这个）**
+
+如果你希望每次打开本项目 VS Code 都自动激活虚拟环境，可以在项目根目录建一个 `.venv`：
+
 ```bash
-# 1. 安装依赖
+cd D:\kender_projects\kender_extracted\kender
+"C:\Users\10215\.workbuddy\binaries\python\versions\3.13.12\python.exe" -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+然后重复"方式 A"的第 1-4 步，选择 `.venv\Scripts\python.exe` 作为解释器。这样每次开新终端 VS Code 会自动运行 `.venv\Scripts\Activate.ps1`。
+
+> 💡 **为什么 VS Code 会自动激活虚拟环境？**
+> VS Code 的 Python 扩展会记住"当前工作区/文件夹选中的 Python 解释器"。
+> 当解释器路径指向一个虚拟环境里的 `python.exe` 时，每次新建终端，扩展就会自动执行对应目录下的 `Activate.ps1`（Windows）或 `activate`（Mac/Linux），所以你会看到终端提示符前面多了 `(.venv)`。
+> 如果你想取消这个行为，按 `Ctrl+Shift+P` → `Python: Select Interpreter` → 选回系统 Python 即可。
+
+#### 2. 安装 / 更新依赖
+
+```bash
+# 方式 A：已在 managed venv 中，直接装
 pip install -r requirements.txt
 
-# 2. 配置环境变量（复制模板并填入你的 DASHSCOPE_API_KEY）
-cp .env.example .env
+# 方式 B：使用项目独立 .venv，先激活再装（VS Code 已自动激活则跳过）
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-# 3. 启动
+#### 3. 配置环境变量
+
+```bash
+# Windows (PowerShell)
+copy .env.example .env
+notepad .env          # 填入你的 DASHSCOPE_API_KEY
+
+# Mac / Linux (bash/zsh)
+cp .env.example .env
+nano .env             # 填入你的 DASHSCOPE_API_KEY
+```
+
+> ⚠️ `.env` 已被 `.gitignore` 忽略，**千万不要手动把它加进 git 提交**。提交前请用 `git status` 确认绿色列表里没有 `.env`。
+
+#### 4. 启动
+
+```bash
 python main.py --web     # Web 界面（默认 http://127.0.0.1:7860）
 python main.py           # 或命令行交互
 ```

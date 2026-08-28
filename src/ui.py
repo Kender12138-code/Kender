@@ -1,7 +1,7 @@
 import asyncio
 import gradio as gr
 from .memory import load_memory
-from .agent import create_agent, get_reply
+from .agent import attach_mcp_tools, create_agent, get_reply_with_review
 from .tools import read_document
 
 # 注意：read_document 不注册为 Agent 工具，而是由 UI 在用户上传文件时预处理，
@@ -248,10 +248,17 @@ def create_ui():
                 gr.Markdown("### 🤖 关于 Kender")
                 gr.Markdown(
                     "Kender 是一个基于 **ReAct** 推理的 AI 助手：\n"
-                    "- 自主决定何时联网搜索\n"
-                    "- 能读取你上传的文档\n"
-                    "- 跨会话记住关于你的事实"
+                    "- 自主决定何时调用哪个工具\n"
+                    "- 参数缺失时会主动追问补全（填槽）\n"
+                    "- 能读取你上传的文档并做向量检索\n"
+                    "- 跨会话记住关于你的事实\n"
+                    "- **多 Agent 协作**：生成回答后由 Critic 审核Agent 把关，"
+                    "不合格会打回重写\n\n"
+                    "对话下方的面板可以展开，看到每一轮的"
+                    "「思考 → 行动 → 观察」和审核结论。"
                 )
+
+                mcp_status = gr.Markdown("🔌 工具接入：初始化中…")
 
             # ================= 主聊天区 =================
             with gr.Column(scale=4):
@@ -263,6 +270,14 @@ def create_ui():
                 )
                 # 清空按钮需等 chatbot 定义后再绑定（避免 NameError）
                 clear_btn.add([chatbot, chat_history])
+
+                # ReAct 推理轨迹：把"思考 → 行动 → 观察"展示出来，
+                # 让 Agent 的离散化决策过程可见（面试时可直接指着讲）
+                with gr.Accordion("🔍 推理轨迹与质量审核（思考 → 行动 → 观察）", open=False):
+                    trace_md = gr.Markdown(
+                        "*发一条消息，这里会显示 Kender 这一轮的推理过程，"
+                        "以及 Critic 审核Agent 给出的结论*"
+                    )
 
                 file_status = gr.Markdown("")
 
@@ -294,6 +309,8 @@ def create_ui():
                 gr.Examples(
                     examples=[
                         "帮我查一下今天上海的天气",
+                        "今天天气怎么样",
+                        "帮我设个提醒",
                         "用通俗的话解释一下什么是 RAG",
                         "帮我总结一下我上传的文档",
                         "你记得我之前跟你说过什么吗？",
@@ -328,9 +345,9 @@ def create_ui():
         file_input.change(handle_file, [file_input], [file_status])
 
         async def respond(msg, history, search):
-            # 空消息不处理
+            # 空消息不处理（gr.update() 表示轨迹面板保持原样，不刷新）
             if not msg or not msg.strip():
-                yield "", history, history
+                yield "", history, history, gr.update()
                 return
 
             user_msg = msg.strip()
@@ -341,19 +358,22 @@ def create_ui():
                 {"role": "user", "content": user_msg},
                 {"role": "assistant", "content": "⏳ Kender 正在思考…"},
             ]
-            yield "", thinking, history
+            yield "", thinking, history, "⏳ 正在推理，稍后这里会显示完整轨迹…"
 
-            # 2) 取完整回复（保留 ReAct 工具调用 + 长期记忆持久化）。
+            # 2) 取完整回复 + ReAct 轨迹（保留工具调用 + 长期记忆持久化）。
             #    AgentScope 的 ReAct 封装聚合返回，未暴露 token 级流式接口，
             #    因此这里直接 await 完整回复，再于前端做增量渲染。
             try:
-                full_reply = await get_reply(agent, model, agent_input, memory)
+                # 生成 → Critic 审核 → 不合格打回重写（评审式多 Agent 协作）
+                full_reply, trace, verdict, rounds = await get_reply_with_review(
+                    agent, model, agent_input, memory
+                )
             except Exception as e:
                 err_history = list(history) + [
                     {"role": "user", "content": user_msg},
                     {"role": "assistant", "content": f"⚠️ 错误：{e}"},
                 ]
-                yield "", err_history, err_history
+                yield "", err_history, err_history, f"⚠️ 出错：{e}"
                 return
 
             # 3) 打字机式增量显示（前端 incremental rendering）。
@@ -361,25 +381,40 @@ def create_ui():
             #    体感上接近流式输出。真 token streaming 见 README 的 Future Work。
             base = list(history) + [{"role": "user", "content": user_msg}]
             step = 3
-            shown = ""
             for i in range(step, len(full_reply) + step, step):
                 shown = full_reply[:i]
                 current = base + [{"role": "assistant", "content": shown}]
-                yield "", current, current
+                yield "", current, current, gr.update()
                 await asyncio.sleep(0.018)
-            # 确保最终完整呈现
+            # 确保最终完整呈现，并在轨迹面板展示审核结论 + ReAct 过程
+            if verdict.passed:
+                review_line = f"**审核通过**（第 {rounds} 轮）· {verdict.reason}"
+            else:
+                review_line = f"**审核仍未通过**（已重试 {rounds} 轮）· {verdict.reason}"
             final = base + [{"role": "assistant", "content": full_reply}]
-            yield "", final, final
+            yield "", final, final, f"{review_line}\n\n{trace}"
 
         send_btn.click(
             respond,
             [msg_input, chat_history, enable_search],
-            [msg_input, chatbot, chat_history],
+            [msg_input, chatbot, chat_history, trace_md],
         )
         msg_input.submit(
             respond,
             [msg_input, chat_history, enable_search],
-            [msg_input, chatbot, chat_history],
+            [msg_input, chatbot, chat_history, trace_md],
         )
+
+        # 页面加载完成后再接 MCP。
+        # 必须用 demo.load 的异步钩子，而不是在 create_ui() 里直接接：
+        # MCP 的 stdio 客户端会绑定到当前事件循环，而 respond() 也跑在这个循环里，
+        # 两者必须是同一个；放在同步的 create_ui() 里会导致跨循环调用失败。
+        async def init_tools():
+            names = await attach_mcp_tools(agent.toolkit)
+            if names:
+                return f"🔌 已接入 MCP Server（协议层）：`{', '.join(names)}`"
+            return "🔌 使用进程内工具（MCP 未接入或已降级）"
+
+        demo.load(init_tools, outputs=[mcp_status])
 
     return demo
