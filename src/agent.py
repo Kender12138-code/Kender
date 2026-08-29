@@ -474,8 +474,14 @@ async def _run_once(agent, model, message):
     return reply_text, trace, tool_calls
 
 
-async def _persist_turn(model, memory, user_message, reply_text):
-    """抽取用户信息并写入长期记忆（一轮对话结束时调用一次）。"""
+async def _persist_turn(model, memory, user_message, reply_text, persist: bool = True):
+    """抽取用户信息并写入长期记忆（一轮对话结束时调用一次）。
+
+    persist=False 时直接跳过：访客会话的对话不落盘、也不做事实抽取
+    （省一次模型调用），实现多用户之间的记忆隔离。
+    """
+    if not persist:
+        return
     user_name, new_facts = await _extract_user_info(
         model, user_message, reply_text, memory.get("key_facts", [])
     )
@@ -494,14 +500,14 @@ async def _persist_turn(model, memory, user_message, reply_text):
     save_memory(memory)
 
 
-async def get_reply_with_trace(agent, model, user_message, memory):
+async def get_reply_with_trace(agent, model, user_message, memory, persist: bool = True):
     """返回 (回复文本, ReAct 推理轨迹)。
 
     与 get_reply 逻辑完全一致，只是额外把 ReAct 中间过程抽出来，
     用于界面展示（让"Agent 把连续输出离散化"这件事变得可见）。
     """
     reply_text, trace, _ = await _run_once(agent, model, user_message)
-    await _persist_turn(model, memory, user_message, reply_text)
+    await _persist_turn(model, memory, user_message, reply_text, persist=persist)
     return reply_text, trace
 
 
@@ -578,7 +584,7 @@ async def critique_reply(model, user_message, reply_text, trace="") -> CriticVer
 
 
 async def get_reply_with_review(
-    agent, model, user_message, memory, max_retries: int = 2
+    agent, model, user_message, memory, max_retries: int = 2, persist: bool = True
 ):
     """生成 → 审核 → 不合格打回重写（评审式多 Agent 协作）。
 
@@ -589,6 +595,8 @@ async def get_reply_with_review(
 
     优化：本轮没有调用工具时直接跳过审核。
     闲聊和"追问用户"没有审核价值，省下一整轮 token。
+
+    persist=False 时不做长期记忆抽取/落盘（Web 访客会话的隔离开关）。
 
     Returns:
         (回复文本, 轨迹文本, 审核结论, 实际生成轮数)
@@ -619,7 +627,9 @@ async def get_reply_with_review(
 
         if verdict.passed or attempt == max_retries:
             # 记忆只在最终版本落盘一次，避免被否决的中间版本污染
-            await _persist_turn(model, memory, user_message, reply_text)
+            await _persist_turn(
+                model, memory, user_message, reply_text, persist=persist
+            )
             return reply_text, trace, verdict, rounds
 
         # 打回重写：把批评意见附加到问题上，让 Generator 知道哪里没做好
@@ -631,7 +641,7 @@ async def get_reply_with_review(
         )
 
     # 理论上到不了这里（循环内必返回），留个兜底防止重构时出纰漏
-    await _persist_turn(model, memory, user_message, reply_text)
+    await _persist_turn(model, memory, user_message, reply_text, persist=persist)
     return reply_text, trace, CriticVerdict(passed=True, reason=""), rounds
 
 

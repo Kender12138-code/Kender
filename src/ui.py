@@ -244,22 +244,34 @@ def resolve_auth():
         消耗的是你自己的 DASHSCOPE_API_KEY。加口令是最基本的防护。
 
     用法：
-        设置环境变量 KENDER_AUTH_USER / KENDER_AUTH_PASS 后生效；
-        两个都没设置时返回 None（本地开发免密，不影响日常使用）。
+        - 主口令：KENDER_AUTH_USER / KENDER_AUTH_PASS（自己用）
+        - 演示口令（可选）：KENDER_DEMO_USER / KENDER_DEMO_PASS
+          （发给面试官/朋友用的弱口令，随时可在云控制台单独改掉）
+        - 都没设置时返回 None（本地开发免密，不影响日常使用）。
+        - Gradio 支持多组账号：返回 [(user, pass), ...]。
 
     Returns:
-        (用户名, 口令) 元组，或 None。
+        (用户名, 口令) 元组、多组账号的列表，或 None。
     """
+    creds = []
     user = os.getenv("KENDER_AUTH_USER")
     password = os.getenv("KENDER_AUTH_PASS")
     if user and password:
-        return (user, password)
-    return None
+        creds.append((user, password))
+    demo_user = os.getenv("KENDER_DEMO_USER")
+    demo_pass = os.getenv("KENDER_DEMO_PASS")
+    if demo_user and demo_pass:
+        creds.append((demo_user, demo_pass))
+    if not creds:
+        return None
+    return creds if len(creds) > 1 else creds[0]
 
 
 def create_ui():
-    memory = load_memory()
-    agent, model = create_agent(memory)
+    # 会话隔离：不在服务启动时创建全局 Agent。
+    # 每个浏览器会话各自持有一套 agent / model / memory（存进 gr.State，
+    # Gradio 天然按会话隔离），避免多个访客共享同一份对话上下文和记忆文件。
+    # 长期记忆的读写由侧边栏「主人模式」开关控制，访客默认不落盘。
 
     with gr.Blocks(
         title="Kender · 你的专属 AI 助手",
@@ -269,6 +281,8 @@ def create_ui():
 
         # 跨组件状态：chat_history 是消息源，chatbot 仅负责展示
         chat_history = gr.State([])
+        # 本会话独立的 Agent 运行时（agent / model / memory），demo.load 时初始化
+        session = gr.State(None)
 
         with gr.Row(equal_height=False):
             # ================= 侧边栏 =================
@@ -278,6 +292,12 @@ def create_ui():
                     label="🌐 优先联网搜索",
                     value=False,
                     info="开启后 Kender 会优先检索最新网络信息",
+                )
+                owner_mode = gr.Checkbox(
+                    label="🧑‍💼 主人模式（启用我的长期记忆）",
+                    value=False,
+                    info="仅自己使用时开启：读写你的记忆文件。"
+                    "访客/演示请保持关闭——会话相互隔离，不会弄乱你的记忆。",
                 )
                 clear_btn = gr.ClearButton(
                     value="🧹 清空对话",
@@ -290,7 +310,8 @@ def create_ui():
                     "- 自主决定何时调用哪个工具\n"
                     "- 参数缺失时会主动追问补全（填槽）\n"
                     "- 能读取你上传的文档并做向量检索\n"
-                    "- 跨会话记住关于你的事实\n"
+                    "- 主人模式下跨会话记住关于你的事实\n"
+                    "- **会话隔离**：每位访客的对话相互独立，互不串记忆\n"
                     "- **多 Agent 协作**：生成回答后由 Critic 审核Agent 把关，"
                     "不合格会打回重写\n\n"
                     "对话下方的面板可以展开，看到每一轮的"
@@ -383,11 +404,17 @@ def create_ui():
 
         file_input.change(handle_file, [file_input], [file_status])
 
-        async def respond(msg, history, search):
+        async def respond(msg, history, search, sess, owner):
             # 空消息不处理（gr.update() 表示轨迹面板保持原样，不刷新）
             if not msg or not msg.strip():
                 yield "", history, history, gr.update()
                 return
+
+            # 会话兜底：正常情况下 demo.load 已初始化；极端时序下就地补建
+            if not sess:
+                sess, _ = await _new_session(bool(owner))
+            agent, model = sess["agent"], sess["model"]
+            memory = sess["memory"]
 
             user_msg = msg.strip()
             agent_input = build_user_message(user_msg, search)
@@ -404,8 +431,9 @@ def create_ui():
             #    因此这里直接 await 完整回复，再于前端做增量渲染。
             try:
                 # 生成 → Critic 审核 → 不合格打回重写（评审式多 Agent 协作）
+                # persist=主人模式：访客会话不做记忆抽取、不落盘（会话隔离）
                 full_reply, trace, verdict, rounds = await get_reply_with_review(
-                    agent, model, agent_input, memory
+                    agent, model, agent_input, memory, persist=bool(owner)
                 )
             except Exception as e:
                 err_history = list(history) + [
@@ -435,25 +463,56 @@ def create_ui():
 
         send_btn.click(
             respond,
-            [msg_input, chat_history, enable_search],
+            [msg_input, chat_history, enable_search, session, owner_mode],
             [msg_input, chatbot, chat_history, trace_md],
         )
         msg_input.submit(
             respond,
-            [msg_input, chat_history, enable_search],
+            [msg_input, chat_history, enable_search, session, owner_mode],
             [msg_input, chatbot, chat_history, trace_md],
         )
 
-        # 页面加载完成后再接 MCP。
-        # 必须用 demo.load 的异步钩子，而不是在 create_ui() 里直接接：
-        # MCP 的 stdio 客户端会绑定到当前事件循环，而 respond() 也跑在这个循环里，
-        # 两者必须是同一个；放在同步的 create_ui() 里会导致跨循环调用失败。
-        async def init_tools():
-            names = await attach_mcp_tools(agent.toolkit)
-            if names:
-                return f"🔌 已接入 MCP Server（协议层）：`{', '.join(names)}`"
-            return "🔌 使用进程内工具（MCP 未接入或已降级）"
+        # ================= 会话隔离：每会话一套 Agent =================
+        # 为当前浏览器会话创建独立的 agent / model / memory。
+        # 主人模式：以本地记忆文件为底稿创建（之后的对话会写回文件）；
+        # 访客模式：空白记忆，只在内存里活着，关页面即丢弃。
+        async def _new_session(owner: bool):
+            if owner:
+                memory = load_memory()
+            else:
+                memory = {"user_name": None, "key_facts": [], "chat_history": []}
+            agent, model = create_agent(memory)
+            try:
+                names = await attach_mcp_tools(agent.toolkit)
+            except Exception:
+                names = []
+            return {"agent": agent, "model": model, "memory": memory}, names
 
-        demo.load(init_tools, outputs=[mcp_status])
+        # 页面加载完成后再建 Agent 并接 MCP。
+        # 必须用 demo.load 的异步钩子，而不是在 create_ui() 里直接建：
+        # MCP 的客户端会绑定到当前事件循环，而 respond() 也跑在这个循环里，
+        # 两者必须是同一个；放在同步的 create_ui() 里会导致跨循环调用失败。
+        async def init_session():
+            sess, names = await _new_session(owner=False)
+            if names:
+                status = f"🔌 已接入 MCP Server（协议层）：`{', '.join(names)}`"
+            else:
+                status = "🔌 使用进程内工具（MCP 未接入或已降级）"
+            return sess, status
+
+        demo.load(init_session, outputs=[session, mcp_status])
+
+        async def rebuild_session(owner, _sess):
+            """切换主人模式 / 清空对话时，重建本会话的 Agent。
+
+            sys_prompt 里嵌着记忆内容，所以改记忆必须重建 Agent，
+            而不是只改字典；清空对话同理（Agent 内部上下文要一并清掉）。
+            """
+            new_sess, _ = await _new_session(bool(owner))
+            return new_sess
+
+        owner_mode.change(rebuild_session, [owner_mode, session], [session])
+        # 清空对话 = 连 Agent 内部的对话记忆一起清（否则旧上下文还在暗中影响回复）
+        clear_btn.click(rebuild_session, [owner_mode, session], [session])
 
     return demo
