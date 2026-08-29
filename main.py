@@ -1,7 +1,7 @@
 import asyncio
 import os
 import sys
-from src.ui import create_ui, KENDER_CSS, KENDER_HEAD, KENDER_THEME
+from src.ui import create_ui, KENDER_CSS, KENDER_HEAD, KENDER_THEME, resolve_auth
 
 
 async def run_cli():
@@ -29,7 +29,9 @@ async def run_cli():
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--web":
         server_name = os.getenv("GRADIO_SERVER_NAME", "127.0.0.1")
+        # 设了 KENDER_AUTH_USER / KENDER_AUTH_PASS 才启用口令，本地不设即免密
         create_ui().launch(
+            auth=resolve_auth(),
             share=False,
             server_name=server_name,
             server_port=7860,

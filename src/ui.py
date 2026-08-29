@@ -1,5 +1,8 @@
 import asyncio
+import os
+
 import gradio as gr
+
 from .memory import load_memory
 from .agent import attach_mcp_tools, create_agent, get_reply_with_review
 from .tools import read_document
@@ -231,6 +234,27 @@ KENDER_JS = """
 KENDER_HEAD = f"""<script type="text/javascript">
 {KENDER_JS}
 </script>"""
+
+
+def resolve_auth():
+    """解析 Gradio 访问口令（公网部署前必须配）。
+
+    为什么需要：
+        页面一旦暴露在公网，任何人打开都能驱动你的 Agent，
+        消耗的是你自己的 DASHSCOPE_API_KEY。加口令是最基本的防护。
+
+    用法：
+        设置环境变量 KENDER_AUTH_USER / KENDER_AUTH_PASS 后生效；
+        两个都没设置时返回 None（本地开发免密，不影响日常使用）。
+
+    Returns:
+        (用户名, 口令) 元组，或 None。
+    """
+    user = os.getenv("KENDER_AUTH_USER")
+    password = os.getenv("KENDER_AUTH_PASS")
+    if user and password:
+        return (user, password)
+    return None
 
 
 def create_ui():

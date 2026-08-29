@@ -248,10 +248,18 @@ python -m uvicorn server:app --port 8002
 > 需要局域网/公网访问时使用 `app.py`（默认 `0.0.0.0`），或给 `main.py` 设置环境变量 `GRADIO_SERVER_NAME=0.0.0.0`。
 > Dockerfile 中已默认设置该变量，容器部署无需额外配置。
 >
-> ⚠️ **公网部署前务必给 `launch()` 加访问口令**，否则任何人都能打开页面消耗你的 `DASHSCOPE_API_KEY`：
-> ```python
-> demo.launch(auth=("kender", "你的口令"), ...)
+> ⚠️ **公网部署前务必开启访问口令**，否则任何人打开页面都能驱动你的 Agent，消耗的是你自己的 `DASHSCOPE_API_KEY`。
+> 项目已内置开关（`src/ui.py` 的 `resolve_auth()`），只需设置两个环境变量：
+> ```bash
+> # Windows (PowerShell)
+> $env:KENDER_AUTH_USER = "kender"
+> $env:KENDER_AUTH_PASS = "你的口令"
+>
+> # Mac / Linux (bash/zsh)
+> export KENDER_AUTH_USER=kender
+> export KENDER_AUTH_PASS=你的口令
 > ```
+> 两个变量都设置才启用口令；都不设置则免密，本地开发不受影响。
 
 ### 方式二：Docker 运行
 
