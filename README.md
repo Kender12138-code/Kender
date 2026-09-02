@@ -480,3 +480,57 @@ Web 界面在拿到模型完整回复后，将文本**逐字（每帧约 3 字�
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — 部署/演示方案，让面试官点开即用。
 - [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) — 逐模块代码讲解稿与高频面试追问预设，帮助把项目讲清楚。
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发约定。
+
+---
+
+## 🌾 农产品电商智能建站 Agent（新增）
+
+基于 Kender 的 Agent 能力做的一个**垂直场景 demo**：农民用自然语言描述"卖什么、怎么卖、多少钱"，AI 自动生成一个类似淘宝店铺的销售页面，支持多轮对话持续调整。
+
+### 适合在面试里讲的点
+
+- **真 ReAct 工具调用**：LLM 自主决定调用 `build_farm_shop` 建店还是 `update_farm_shop` 改店，轨迹面板可见"思考 → 行动 → 观察"。
+- **零回归接入**：新增 `src/farm_shop.py` + `farm_shop_app.py` + `farm_react_app.py`，**没有改动 Kender 原有文件**。
+- **左右分栏交互**：左侧聊天，右侧实时生成店铺页面，体验直观。
+
+### 运行方式
+
+```bash
+cd D:\kender_projects\kender_extracted\kender
+
+# 推荐：ReActAgent 版（带推理轨迹，面试展示效果更好）
+python farm_react_app.py
+# 浏览器打开 http://127.0.0.1:7862
+
+# 或者：简单直接版
+python farm_shop_app.py
+# 浏览器打开 http://127.0.0.1:7861
+```
+
+### 示例对话
+
+```text
+用户：我家有50斤西红柿，3块钱一斤，还有30斤黄瓜，2块钱一斤，店名叫李叔菜园
+AI  → 调用 build_farm_shop
+AI  → 李叔菜园建好啦，展示西红柿和黄瓜
+
+用户：再加20个土鸡蛋，2块钱一个，换个清新风格
+AI  → 调用 update_farm_shop
+AI  → 已加上土鸡蛋，风格换成清新
+```
+
+### 文件说明
+
+| 文件 | 作用 |
+| --- | --- |
+| `src/farm_shop.py` | 核心逻辑：从自然语言提取/更新店铺信息、渲染 HTML 页面 |
+| `farm_shop_app.py` | 简单直接版入口：左侧聊天 + 右侧预览 |
+| `farm_react_app.py` | **ReActAgent 版入口**：复用 Kender 的 ReActAgent，LLM 自主调用工具 |
+| `data/shop_react_preview_demo.html` | 示例生成的店铺页面，可直接用浏览器打开 |
+
+### 已知限制
+
+- **右侧预览**：为避免 Gradio 6 `gr.HTML` 对 `position:fixed` 的渲染 bug（fixed 元素会吞掉文档流主体），预览面板里的店铺页采用内联样式、文档流定位；点击商品卡片的「加入购物车」、底部的「购物车」在预览区内可直接交互。
+- **完整交互版**：底部提供「在新窗口打开完整交互版」链接，会打开一个独立 HTML 页面，里面购物车/结算/模拟微信支付二维码是 `position:fixed` 悬浮交互，体验最接近真实淘宝店铺。
+- 微信支付为模拟二维码，真实收款需接入微信支付商户号。
+- 当前为单用户 demo，`_current_shop` 是全局状态；多人并发使用需按 session 隔离或落库。
