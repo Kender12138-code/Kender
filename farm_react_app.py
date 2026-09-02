@@ -40,7 +40,7 @@ from src.tools import get_current_date
 
 HEADER_HTML = """
 <div style="padding: 16px 20px; border-bottom: 1px solid #e5e7eb; background: #fff;">
-  <div style="font-size: 20px; font-weight: 700; color: #2e7d32;">🌾 农家小铺 AI 建站（ReAct 版）</div>
+  <div style="font-size: 20px; font-weight: 700; color: #2e7d32;">🌾 农民电商 Agent智能体（ReAct 版）</div>
   <div style="font-size: 13px; color: #666; margin-top: 4px;">LLM 自主决定建店 / 改店，轨迹可见</div>
 </div>
 """
@@ -112,7 +112,7 @@ def create_farm_react_agent(memory):
 
     agent = ReActAgent(
         name="FarmShopAgent",
-        sys_prompt=f"""你是一个农产品电商智能建站助手，名字叫农家小铺 AI。
+        sys_prompt=f"""你是农民电商 Agent智能体，帮助农民用自然语言开网店。
 {prompt}
 
 当前真实日期：{get_current_date()}。
@@ -205,7 +205,7 @@ async def respond(message, history, session, trace_md):
 
 def create_ui():
     """创建左右分栏的 Gradio 界面。"""
-    with gr.Blocks(title="农家小铺 AI 建站 · ReAct 版") as demo:
+    with gr.Blocks(title="农民电商 Agent智能体 · ReAct 版") as demo:
         gr.HTML(HEADER_HTML)
 
         with gr.Row(equal_height=True):
@@ -213,7 +213,7 @@ def create_ui():
                 chatbot = gr.Chatbot(
                     label="",
                     height=480,
-                    value=[{"role": "assistant", "content": "你好！我是农家小铺 AI。告诉我你要卖什么，比如\"我家有50斤西红柿，3块钱一斤，想在网上卖\"。"}],
+                    value=[{"role": "assistant", "content": "你好！我是农民电商 Agent智能体。告诉我你要卖什么，比如\"我家有50斤西红柿，3块钱一斤，想在网上卖\"。"}],
                 )
                 with gr.Row():
                     msg_input = gr.Textbox(

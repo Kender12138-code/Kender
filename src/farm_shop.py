@@ -1,5 +1,5 @@
 """
-农产品电商智能建站核心模块。
+农民电商 Agent智能体核心模块。
 
 基于 Kender 已有的 DashScope(qwen-plus) 调用能力，做一层农产品店铺专用封装：
 - 从农民自然语言中提取/更新店铺信息
@@ -389,7 +389,8 @@ SHOP_CART_SCRIPT = """
   function toggleCart() {
     const el = deepQuery(document, '#cart-panel');
     if (!el) return;
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    // 兼容两种初始态：内联 display:none（预览版）或类样式 display:none（完整版）
+    el.style.display = (el.style.display === 'block') ? 'none' : 'block';
   }
   function checkout() {
     if (Object.keys(cart).length === 0) return alert('购物车是空的');

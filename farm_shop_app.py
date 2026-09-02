@@ -45,7 +45,7 @@ def _save_preview(html: str):
 
 HEADER_HTML = """
 <div style="padding: 16px 20px; border-bottom: 1px solid #e5e7eb; background: #fff;">
-  <div style="font-size: 20px; font-weight: 700; color: #2e7d32;">🌾 农家小铺 AI 建站</div>
+  <div style="font-size: 20px; font-weight: 700; color: #2e7d32;">🌾 农民电商 Agent智能体</div>
   <div style="font-size: 13px; color: #666; margin-top: 4px;">说说话，店铺页面就出来</div>
 </div>
 """
@@ -126,7 +126,7 @@ FARM_CSS = """
 
 def create_farm_ui():
     """创建左右分栏的 Gradio 界面。"""
-    with gr.Blocks(title="农家小铺 AI 建站") as demo:
+    with gr.Blocks(title="农民电商 Agent智能体") as demo:
         gr.HTML(HEADER_HTML)
 
         with gr.Row(equal_height=True):
@@ -135,7 +135,7 @@ def create_farm_ui():
                 chatbot = gr.Chatbot(
                     label="",
                     height=520,
-                    value=[{"role": "assistant", "content": "你好！我是农家小铺 AI 助手。告诉我你要卖什么，比如：\"我家有50斤西红柿，3块钱一斤，想在网上卖\"。"}],
+                    value=[{"role": "assistant", "content": "你好！我是农民电商 Agent智能体。告诉我你要卖什么，比如：\"我家有50斤西红柿，3块钱一斤，想在网上卖\"。"}],
                 )
                 with gr.Row():
                     msg_input = gr.Textbox(
