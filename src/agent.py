@@ -622,6 +622,13 @@ async def get_reply_with_review(
 
         if tool_calls == 0:
             # 没调工具 = 闲聊或正在追问用户，没必要审核
+            # ⚠️ 修复（2026-09-09）：原来这里直接 return，跳过了 _persist_turn，
+            # 于是"我叫XX""我要去出差""我不吃香菜"这类不触发工具的陈述
+            # 一条都进不了长期记忆 —— 而这恰恰是记忆最主要的来源。
+            # 审核可以跳过，记忆不能跳过。
+            await _persist_turn(
+                model, memory, user_message, reply_text, persist=persist
+            )
             return (
                 reply_text,
                 trace or last_trace_with_tools,
