@@ -312,10 +312,15 @@ async def _extract_user_info(model, user_message, reply_text, existing_facts):
     )
     # 过滤反问句，例如"我叫什么""我叫啥""你猜我叫什么"
     invalid_names = {"什么", "啥", "谁", "多少", "几", "吗", "呢", "吧", "嘛"}
+    rule_name = None
     if name_match:
         name = name_match.group(1).strip()
         if 1 < len(name) <= 20 and name not in invalid_names:
-            return name, []
+            # ⚠️ 修复（2026-09-09）：原来这里直接 `return name, []`，
+            # 导致只要用户说出名字，本轮的事实/偏好就整轮被丢弃——
+            # 表现为"记不住东西"。正确做法是只把名字记为兜底值，
+            # 事实抽取照常往下走。
+            rule_name = name
 
     existing = "\n".join(f"- {f}" for f in existing_facts[-10:])
 
@@ -353,9 +358,10 @@ async def _extract_user_info(model, user_message, reply_text, existing_facts):
             info = None
 
     if info is None:
-        # 两次都失败：降级为空结果，不污染记忆（正则兜底已在函数开头处理过名字）
+        # 两次都失败：降级为空结果，不污染记忆。
+        # 但正则兜底命中的名字仍然要保住，不能一起丢掉。
         print("[memory-extract] 抽取失败，本轮不写入新事实")
-        return None, []
+        return rule_name, []
 
     new_facts = []
     seen = set(existing_facts)
@@ -364,7 +370,8 @@ async def _extract_user_info(model, user_message, reply_text, existing_facts):
             new_facts.append(item.strip())
             seen.add(item.strip())
 
-    name = (info.name or "").strip()
+    # 名字优先用 LLM 抽的，抽不到再退回正则兜底值
+    name = (info.name or rule_name or "").strip()
     if 1 < len(name) <= 20:
         return name, new_facts
     return None, new_facts
