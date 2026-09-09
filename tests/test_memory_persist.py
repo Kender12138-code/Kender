@@ -1,4 +1,4 @@
-"""记忆落盘的回归测试（离线）。
+"""记忆落盘的回归测试（离线，不依赖 pytest-asyncio）。
 
 背景（2026-09-09 修的第二个 bug）：
     get_reply_with_review 里"本轮没有调用工具"的分支直接 return，
@@ -16,7 +16,11 @@ class _FakeModel:
     pass
 
 
-async def test_未调用工具时仍然写入长期记忆(monkeypatch):
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def test_未调用工具时仍然写入长期记忆(monkeypatch):
     calls = []
 
     async def fake_run_once(agent, model, message):
@@ -30,7 +34,7 @@ async def test_未调用工具时仍然写入长期记忆(monkeypatch):
     monkeypatch.setattr(agent_mod, "_persist_turn", fake_persist)
 
     memory = {"user_name": None, "key_facts": [], "chat_history": []}
-    reply, trace, verdict, rounds = asyncio.run(
+    reply, trace, verdict, rounds = _run(
         agent_mod.get_reply_with_review(
             object(), _FakeModel(), "我叫杨恺，我明天要去体检", memory
         )
@@ -42,7 +46,7 @@ async def test_未调用工具时仍然写入长期记忆(monkeypatch):
     assert calls == [("我叫杨恺，我明天要去体检", True)]
 
 
-async def test_persist_false时不写记忆(monkeypatch):
+def test_persist_false时不写记忆(monkeypatch):
     """Web 访客会话的隔离开关：persist=False 时一条都不许写。"""
     calls = []
 
@@ -56,7 +60,7 @@ async def test_persist_false时不写记忆(monkeypatch):
     monkeypatch.setattr(agent_mod, "_persist_turn", fake_persist)
 
     memory = {"user_name": None, "key_facts": [], "chat_history": []}
-    asyncio.run(
+    _run(
         agent_mod.get_reply_with_review(
             object(), _FakeModel(), "随便聊聊", memory, persist=False
         )
