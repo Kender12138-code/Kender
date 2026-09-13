@@ -20,7 +20,11 @@ import sqlite3
 import sys
 import time
 
-os.environ.setdefault("DB_PATH", "data/bench.db")
+# 统一和 src/db_tool.py 用同一个库，这样跑完评测 Gradio 界面里立刻就能查
+os.environ.setdefault(
+    "DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "kender.db"),
+)
 
 from src.db_tool import nl2sql  # noqa: E402  (必须在设置 DB_PATH 之后导入)
 

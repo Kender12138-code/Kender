@@ -25,8 +25,18 @@ try:
 except ImportError:
     pass
 
-DB_PATH = os.getenv("DB_PATH", "data/kender.db")
+# 默认库路径用「项目根目录」拼接的绝对路径。
+# 原因：相对路径依赖进程的工作目录，从别的目录启动服务就会连到空库上。
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB_PATH = os.path.join(_PROJECT_ROOT, "data", "kender.db")
+
+DB_PATH = os.getenv("DB_PATH") or DEFAULT_DB_PATH
 MAX_ROWS = 50  # 返回给模型的最大行数，防止撑爆上下文
+
+DB_MISSING_HINT = (
+    f"业务数据库不存在：{DB_PATH}\n"
+    "演示用的示例库可以用 `python bench_nl2sql.py --rebuild` 生成（会建到 data/kender.db）。"
+)
 
 DENY = re.compile(
     r"\b(drop|delete|update|insert|alter|create|attach|pragma|replace|vacuum)\b", re.I
@@ -197,6 +207,9 @@ def query_database(question: str) -> ToolResponse:
     Returns:
         ToolResponse: 包含生成的 SQL 和查询结果的文本（最多 50 行）。
     """
+    if not os.path.exists(DB_PATH):
+        return ToolResponse(content=[{"type": "text", "text": DB_MISSING_HINT}])
+
     try:
         sql = nl2sql(question)
         con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
