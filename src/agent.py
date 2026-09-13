@@ -152,6 +152,14 @@ def create_agent(memory):
     toolkit.register_tool_function(search_web)
     toolkit.register_tool_function(get_weather)
     toolkit.register_tool_function(retrieve_document)
+    # 自然语言查本地业务库：属于可选能力，没装 openai 或没配 DB 就自动跳过，
+    # 不影响其它工具与既有功能。
+    try:
+        from src.db_tool import query_database
+
+        toolkit.register_tool_function(query_database)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[toolkit] 数据库问答工具未启用：{exc}")
     # 提醒能力默认由 MCP Server 提供（见 attach_mcp_tools）；
     # MCP 接入失败时，才把进程内的 set_reminder 作为降级方案补注册回来。
 
