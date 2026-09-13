@@ -13,8 +13,18 @@
 
 > 适用场景：日常问答、联网查最新资讯、解析本地文档、管理提醒事项，并且能随着和你对话次数的增多而越来越"懂你"。
 
-**🚀 在线体验（腾讯云 CloudBase Run 部署）**：<http://kender-304815-11-1477243187.sh.run.cloudbase.com>
-> 访问需要口令（`KENDER_AUTH_USER` / `KENDER_AUTH_PASS`），如需演示请联系作者。
+**💻 演示方式（推荐本地一键启动）**：
+
+```bash
+python start_local_demo.py
+# 自动起 Gradio 界面 http://127.0.0.1:7860 + FastAPI 接口 http://127.0.0.1:8003/docs
+# 启动前会清理上一次没退干净的残留进程，端口不再漂移；退出按 Ctrl+C，自动释放端口
+```
+
+> ⚠️ 历史说明：本项目曾部署在腾讯云 CloudBase Run（`kender-304815-11-1477243187.sh.run.cloudbase.com`），
+> 该实例已下线、域名已失效（公共 DNS 返回 NXDOMAIN）。**简历 / 作品集请以 GitHub 仓库 + 本地演示为准**，
+> 不要引用任何已失效的在线地址——放一个会过期的链接，比不放链接更减分。
+> 若重新上线，务必同时配置 `KENDER_AUTH_USER` / `KENDER_AUTH_PASS`，否则任何人打开都在消耗你的 API Key。
 
 ---
 
