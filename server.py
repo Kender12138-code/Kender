@@ -6,9 +6,9 @@
     POST /chat    -> 发一句话给 Kender，返回回复 + ReAct 轨迹 + 审核结论
 
 启动命令（在 kender 目录下）：
-    python -m uvicorn server:app --port 8002
+    python -m uvicorn server:app --port 8003
 自测：
-    浏览器打开 http://127.0.0.1:8002/docs
+    浏览器打开 http://127.0.0.1:8003/docs
 
 【相比 Day 2 版本的两处重要改动】
 

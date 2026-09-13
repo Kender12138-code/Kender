@@ -85,7 +85,7 @@
 ```text
 ┌──────────────────────────────────────────────────────────┐
 │                        接入层                             │
-│   Gradio Web (7860)  │  CLI  │  FastAPI HTTP (8002)       │
+│   Gradio Web (7860)  │  CLI  │  FastAPI HTTP (8003)       │
 └──────────────┬───────────────────────────────────────────┘
                │ 用户消息
                ▼
@@ -121,7 +121,11 @@
 
 **核心数据流**：用户消息 → Agent 拼装（记忆 + 系统提示）→ 模型推理 → 必要时调用工具 → Critic 审核 → 生成回复 → 后台抽取 key_facts 写回记忆。
 
-**端口占用**：Web `7860` ｜ FastAPI `8002` ｜ MCP Server `8100`（可用 `KENDER_MCP_PORT` 覆盖）
+**端口占用**：Web `7860` ｜ FastAPI `8003` ｜ MCP Server `8100`（可用 `KENDER_MCP_PORT` 覆盖）
+
+> 一键启动脚本 `start_local_demo.py` 在启动前会清理上一次没退干净的自己人（只认 Kender 自己的进程 + HTTP 身份校验，不碰别的程序），
+> 让端口回到默认值；确认是别的程序占用时才往后顺延。退出时按进程树结束，不留僵尸进程。
+> 想跳过清理、直接把端口往后顺延：`python start_local_demo.py --keep-existing`
 
 ---
 
@@ -426,7 +430,7 @@ Web 界面底部有折叠面板「🔍 推理轨迹与质量审核（思考 → 
 | `POST /chat` | 发一句话，返回 `{reply, trace, review:{passed, reason, rounds}}` |
 | `GET /health` | 健康检查，方便运维探活 |
 
-启动：`python -m uvicorn server:app --port 8002`，Swagger 文档在 `/docs`。
+启动：`python -m uvicorn server:app --port 8003`，Swagger 文档在 `/docs`。
 
 **关键设计：初始化放进 `lifespan`**。原来 memory / agent 写在模块顶层，接入 MCP 后不行了——MCP 客户端会绑定到一个具体的事件循环上，而模块顶层还没有循环；老版本在每个请求里 `asyncio.run()` 新建循环，会导致「A 循环里连接、B 循环里调用」必然报错。放进 lifespan 后，初始化和请求都跑在 uvicorn 的同一个循环里。
 
