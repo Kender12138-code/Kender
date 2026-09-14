@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kender Verify"
+  short_description: "改完 Kender 代码后离线跑测试、CLI 冒烟与端口残留检查"
+  default_prompt: "用 $kender-verify 验证这次改动。"
