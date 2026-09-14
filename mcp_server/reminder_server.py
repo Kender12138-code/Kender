@@ -34,8 +34,10 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-# data 目录相对项目根（与 memory.py 的约定一致）
-REMINDER_FILE = Path("data/reminders.json")
+# data 目录按脚本位置推算，而不是写相对路径 "data/reminders.json"。
+# 为什么：这个脚本是被别的进程用任意工作目录拉起来的（见 src/agent.py 的
+# _start_mcp_server），相对路径会把提醒写到别的地方去。规则与 src/paths.py 一致。
+REMINDER_FILE = Path(__file__).resolve().parents[1] / "data" / "reminders.json"
 
 mcp = FastMCP("kender-reminder")
 

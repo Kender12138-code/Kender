@@ -18,11 +18,13 @@ import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from .paths import data_path
+
 load_dotenv()
 
 EMBEDDING_MODEL = "text-embedding-v3"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_INDEX_DIR = "data/faiss_index"
+DEFAULT_INDEX_DIR = data_path("faiss_index")
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80
 

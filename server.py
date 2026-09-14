@@ -24,18 +24,30 @@
    与 MCP 客户端同处一个事件循环。
 """
 
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from src.agent import attach_mcp_tools, create_agent, get_reply_with_review
+from src.agent import (
+    attach_mcp_tools,
+    create_agent,
+    get_reply_with_review,
+    shutdown_mcp_server,
+)
 from src.memory import load_memory
 
 # 全局单例（在 lifespan 中赋值）
 memory = None
 agent = None
 model = None
+
+# 可选鉴权：设了 KENDER_API_TOKEN 才校验请求头 X-Kender-Token。
+# 为什么要有：/chat 会真实消耗 DASHSCOPE_API_KEY，服务一旦监听 0.0.0.0
+# （或被端口转发到公网），任何扫到 8003 的人都能烧你的额度。
+# 不设 = 免密，保持本地演示 `python start_local_demo.py` 的用法不变。
+API_TOKEN = os.getenv("KENDER_API_TOKEN")
 
 
 @asynccontextmanager
@@ -48,6 +60,8 @@ async def lifespan(app: FastAPI):
     await attach_mcp_tools(agent.toolkit)
     print("[server] Kender 服务已就绪")
     yield
+    # 回收 attach_mcp_tools 拉起来的 MCP Server 子进程，别让 8100 留残兵
+    shutdown_mcp_server()
     print("[server] 服务关闭")
 
 
@@ -59,8 +73,10 @@ class ChatBody(BaseModel):
 
 
 @app.post("/chat")
-async def chat(body: ChatBody):
+async def chat(body: ChatBody, x_kender_token: str | None = Header(default=None)):
     """发消息给 Kender，返回回复 + ReAct 轨迹 + Critic 审核结论。"""
+    if API_TOKEN and x_kender_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="缺少或错误的 X-Kender-Token")
     reply, trace, verdict, rounds = await get_reply_with_review(
         agent, model, body.message, memory
     )

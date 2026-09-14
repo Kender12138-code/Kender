@@ -1,12 +1,13 @@
 import json
-import os
-from pathlib import Path
+
+from .paths import DATA_DIR, data_path
 
 # ⚠️ 修复（2026-09-09）：原来用相对路径 "data/..."，一旦进程的工作目录不是项目根目录
 # （容器部署、定时任务、别处调用脚本都会遇到），记忆就会写到别的地方或直接丢失，
-# 表现为"长期记忆时灵时不灵"。改成基于文件位置推算的绝对路径。
-_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-HISTORY_FILE = str(_DATA_DIR / "kender_memory.json")
+# 表现为"长期记忆时灵时不灵"。2026-09-14 把根目录推算挪到 src/paths.py，
+# 这里改成引用，避免每个模块各算一遍。
+_DATA_DIR = DATA_DIR
+HISTORY_FILE = data_path("kender_memory.json")
 
 
 def load_memory():

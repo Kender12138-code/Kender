@@ -62,8 +62,10 @@ def _start_mcp_server() -> bool:
         # 管道缓冲区被写满后子进程会卡死，导致后续所有工具调用超时。
         # 这里改为写日志文件，既能排错又不会堵。
         try:
-            os.makedirs("data", exist_ok=True)
-            logf = open("data/mcp_server.log", "a", encoding="utf-8")
+            from .paths import data_path, ensure_data_dir
+
+            ensure_data_dir()
+            logf = open(data_path("mcp_server.log"), "a", encoding="utf-8")
         except Exception:
             logf = subprocess.DEVNULL
 
@@ -86,6 +88,38 @@ def _start_mcp_server() -> bool:
     except Exception as e:
         print(f"[mcp] 启动 MCP Server 失败：{e}")
         return False
+
+
+def shutdown_mcp_server() -> bool:
+    """回收本进程启动的 MCP Server 子进程（进程退出前调用）。
+
+    为什么需要：_start_mcp_server 起的子进程不会随父进程一起消失，
+    父进程退出后它继续占着 8100，下次演示就会撞上"端口被占用"。
+
+    只结束"自己拉起来的"那个进程：如果 8100 上是别人先起的服务
+    （_start_mcp_server 的复用分支），_mcp_proc 是 None，这里什么都不做。
+
+    Returns:
+        True 表示确实停掉了一个子进程，False 表示没有需要停的。
+    """
+    global _mcp_proc
+
+    if _mcp_proc is None:
+        return False
+
+    import subprocess
+
+    proc, _mcp_proc = _mcp_proc, None
+    if proc.poll() is not None:
+        return False
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    print(f"[mcp] 已停止 MCP Server 子进程（pid={proc.pid}）")
+    return True
 
 
 async def attach_mcp_tools(toolkit, enabled: bool = True):

@@ -5,7 +5,9 @@ from pathlib import Path
 from ddgs import DDGS
 from agentscope.tool import ToolResponse
 
-REMINDER_FILE = "data/reminders.json"
+from .paths import data_path, ensure_data_dir
+
+REMINDER_FILE = data_path("reminders.json")
 
 
 def search_web(query: str, max_results: int = 3) -> ToolResponse:
@@ -85,7 +87,7 @@ def set_reminder(title: str, remind_time: str) -> ToolResponse:
         ToolResponse: 提醒创建结果，含当前已有的全部提醒列表。
     """
     try:
-        os.makedirs("data", exist_ok=True)
+        ensure_data_dir()
         try:
             with open(REMINDER_FILE, "r", encoding="utf-8") as f:
                 items = json.load(f)
