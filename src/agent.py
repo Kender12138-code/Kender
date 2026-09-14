@@ -194,6 +194,20 @@ def create_agent(memory):
         toolkit.register_tool_function(query_database)
     except Exception as exc:  # noqa: BLE001
         print(f"[toolkit] 数据库问答工具未启用：{exc}")
+    # 技能机制：把 skills/ 与 data/skills/ 下的技能注册进 toolkit，并把
+    # 「列技能 / 读技能 / 存技能」三个工具交给模型。注册之后 AgentScope 会自动
+    # 把技能清单拼进系统提示词（细节见 src/skills.py 的模块注释）。
+    try:
+        from src.skills import list_skills, make_skill_tools, read_skill, register_skills
+
+        skill_names = register_skills(toolkit)
+        toolkit.register_tool_function(list_skills)
+        toolkit.register_tool_function(read_skill)
+        for skill_tool in make_skill_tools(toolkit):
+            toolkit.register_tool_function(skill_tool)
+        print(f"[skills] 已启用 {len(skill_names)} 个技能：{skill_names}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[toolkit] 技能机制未启用：{exc}")
     # 提醒能力默认由 MCP Server 提供（见 attach_mcp_tools）；
     # MCP 接入失败时，才把进程内的 set_reminder 作为降级方案补注册回来。
 
@@ -213,11 +227,14 @@ def create_agent(memory):
 3. retrieve_document：从用户已上传的文档中检索内容。
 4. 提醒工具：可以创建提醒事项、查看已有提醒（由 MCP Server 提供）。
    创建提醒时「提醒内容」与「提醒时间」都是必填的，缺一不可。
+5. 技能工具：list_skills 列出已有技能，read_skill 读某个技能的完整步骤，save_skill 存新技能，delete_skill 删掉自己写的技能，set_skill_enabled 停用或重新启用技能。
 
 工具调用规则：
 - 先调用工具获取结果，再用简洁、自然的语言回答。如果工具调用失败或返回空，请如实说明，不要编造。
 - 【填槽规则】调用任何工具前，先检查必需参数是否齐全。如果用户没有提供某个必需参数（例如没说查哪个城市、没说提醒什么内容或什么时间），
   禁止猜测、禁止使用默认值、禁止跳过该参数，必须先向用户追问补全，等用户回答后再调用工具。
+- 【技能规则】系统提示词末尾会列出你已经拥有的技能。当用户的任务命中某个技能的描述时，必须先调 read_skill 读出它的完整步骤，再照着执行，不要凭印象做。
+- 【学技能规则】只有用户明确说"记住这套做法""以后都按这个来"时，才调用 save_skill；调用前先用一句话跟用户确认。技能名用小写连字符，description 要写清"什么时候该用"。删技能、停用技能同理：只有用户明确要求时才调 delete_skill / set_skill_enabled，动手前确认一次。
 
 回答要简洁、自然，不要主动列举你能做什么。""",
         model=model,

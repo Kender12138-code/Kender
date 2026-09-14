@@ -56,6 +56,7 @@ python start_local_demo.py
 | 🚀 **FastAPI 服务化** | 独立 HTTP 服务，暴露 `/chat` 与 `/health`，自带 Swagger 文档；初始化放进 lifespan 保证与 MCP 同处一个事件循环 |
 | 🐳 容器化部署 | 内置 Dockerfile，可一键打包为镜像部署 |
 | 🗃️ **自然语言查库（NL2SQL）** | 用大白话直接查本地业务库。生成 SQL 后连过**六道防线**（只读连接 / 只放行 SELECT / 危险词黑名单 / **表名白名单** / 强制 LIMIT / 先 EXPLAIN 再执行）才允许跑，报错回喂模型自纠一次 |
+| 🧩 **技能机制（Kender 自己写技能）** | 技能 = 一个 `SKILL.md`（名字 + 描述 + 步骤）。用户说"记住这套做法"，Kender 把它写成技能并**当场生效**；技能清单只占一行上下文，正文用到才加载（渐进式披露）——不用改代码就能扩展能力 |
 
 ---
 
@@ -148,28 +149,36 @@ kender/
 ├── app.py                     # 公网部署入口：默认绑 0.0.0.0:7860（Docker / HuggingFace Spaces 用）
 ├── server.py                  # FastAPI 服务化：POST /chat、GET /health
 ├── requirements.txt           # 依赖清单
+├── pytest.ini                 # pytest 收集范围（只收 tests/，避免误收集预览脚本）
+├── .agents/skills/            # 开发用 Codex 技能：kender-verify（改完代码的离线验证流程）
 ├── Dockerfile                 # 容器化构建
 ├── .dockerignore
 ├── .env.example               # 环境变量模板（复制为 .env 并填入 key）
 ├── .gitignore
 ├── LICENSE                    # MIT 开源协议
 ├── src/
-│   ├── agent.py               # ReActAgent 构建 + 工具注册 + Critic 审核 + MCP 接入 + 记忆抽取
+│   ├── agent.py               # ReActAgent 构建 + 工具/技能注册 + Critic 审核 + MCP 接入 + 记忆抽取
 │   ├── tools.py               # 工具函数：search_web / get_weather / retrieve_document
 │   │                          #            + query 改写 + 降级用 set_reminder
+│   ├── skills.py              # 技能机制：扫描 / 校验 / 保存 SKILL.md，注册进 Toolkit
+│   ├── paths.py               # data/ 路径统一入口（避免相对路径随工作目录漂移）
 │   ├── memory.py              # 记忆的加载 / 保存 / 提示词拼装
 │   ├── rag.py                 # 文档分块 + DashScope Embedding + FAISS 索引与检索
 │   ├── ui.py                  # Gradio Web 界面（含 ReAct 轨迹面板）
 │   └── __init__.py
+├── skills/                    # 随仓库发布的技能（每个技能一个目录 + SKILL.md，进 git）
+│   └── business-query/        #   示例：业务数据问答的口径与步骤
 ├── mcp_server/
 │   └── reminder_server.py     # 独立进程 MCP Server：add_reminder / list_reminders
 ├── data/                      # 运行时自动生成，已被 .gitignore 忽略
 │   ├── kender_memory.json     #   长期记忆
 │   ├── reminders.json         #   提醒事项
+│   ├── skills/                #   运行时写出来的技能（客户在对话里自己写的）
 │   ├── faiss_index/           #   RAG 向量库
 │   └── mcp_server.log         #   MCP Server 日志
 └── tests/
     ├── test_memory.py         # 记忆读写测试
+    ├── test_skills.py         # 技能机制测试（读写 / 校验 / 注册）
     └── test_smoke.py          # 冒烟测试（工具返回类型等，无需联网）
 ```
 
@@ -497,6 +506,42 @@ python bench_nl2sql.py --rebuild
 
 ---
 
+### 12. 技能机制（Kender 自己写技能）
+
+**要解决的问题**：如果 Agent 的能力只能靠改代码扩展，那用户想让它"以后都按我们公司的流程做"就没办法。技能机制把"一套做法"变成**数据**——不改代码就能扩展。
+
+**一个技能 = 一个目录 + 一份 `SKILL.md`**（YAML front matter 里必须有 `name` 和 `description`）：
+
+```markdown
+---
+name: business-query
+description: 回答业务数据问题时使用（订单、商品、销量）：先对齐口径和时间范围，再查库，最后说明口径。
+---
+
+1. 先对齐口径：指标定义、时间范围、统计维度，缺任何一项就追问；
+2. 调 query_database，把用户的原始问题交给它做自然语言转 SQL；
+3. 结果附一句口径说明（时间范围 / 统计维度 / 行数上限）。
+```
+
+**渐进式披露**：技能注册进 Toolkit 后，AgentScope 只把「技能名 + 描述 + 目录」拼进系统提示词（见 `agentscope/agent/_react_agent.py` 的 `sys_prompt` 属性），模型判断任务命中某条描述时，才调 `read_skill` 读完整正文。技能再多也不会把上下文撑爆——而 `description` 是唯一参与"该不该用这个技能"判断的字段，所以触发场景必须写清楚。
+
+**"自己写技能"的闭环**：用户说一句"记住这套做法"，模型调 `save_skill` 写出 `data/skills/<name>/SKILL.md`，并立刻注册回当前会话的 Toolkit（`sys_prompt` 是动态属性，下一轮回复就带上它）。实测：对 CLI 说一段库存查询流程，Kender 自己写出了 `data/skills/stock-query/SKILL.md`，并回报"已保存并立即生效"。
+
+**为什么写入要过四道校验**——技能正文是"写进模型自己的指令"，等于让它给自己下命令：
+
+| 校验 | 目的 |
+| --- | --- |
+| 名字必须匹配 `^[a-z0-9][a-z0-9-]*$` | 顺带挡掉 `../` 这类路径穿越 |
+| description 必填、限长 300 字 | 它是唯一参与技能选择判断的字段 |
+| 正文限长 8000 字 | 正文会被读进上下文，太长等于烧 token |
+| 总数上限 50 个，可停用可删除 | 防止技能库攒成垃圾场 |
+
+另外两条约束：`save_skill` 只在用户**明确要求**"记住这套做法"时才调用（sys_prompt 里写死了这条规则）；随仓库发布的技能不允许被用户写的同名技能覆盖。
+
+**多会话隔离**：Web 界面每个浏览器会话各建一套 agent / toolkit（见 `src/ui.py`），所以 `save_skill` / `delete_skill` / `set_skill_enabled` 都是**工厂函数**，绑定到"当前这个会话"的 toolkit，而不是模块级全局变量——否则 A 会话存的技能会串到 B 会话去。
+
+---
+
 ## ⚠️ 已知限制与边界
 
 诚实列出当前版本的取舍，这也是面试中该主动说清的部分：
@@ -512,6 +557,9 @@ python bench_nl2sql.py --rebuild
 | CLI 模式 | 不带 Critic 审核（调用 `get_reply`），只有 Web 与 API 走 `get_reply_with_review` |
 | 并发 | 单实例，未做请求队列；但 Web 界面已实现**多会话隔离**（每个浏览器会话独立 Agent 与记忆，访客不落盘），仅 FastAPI 接口仍共享全局 Agent |
 | NL2SQL | 仅支持 SQLite 单方言；依赖 prompt 约束 + 规则校验，**未做**意图层（槽位）显式抽取；查不存在的表靠 `NO_TABLE` 拒绝，不做跨库 join 的自动推理 |
+| 技能机制 | **单租户**：所有技能共用一个 `data/skills/` 目录，未做多客户隔离（每客户一份技能目录 + 独立开关） |
+| 技能质量 | 没有审核 / 版本 / 灰度：结构校验只能拦住"写得不规范"，拦不住"做法本身好不好" |
+| 学技能触发 | 只有用户明确说"记住这套做法"才会存；Agent 不会主动提议，也没有从历史对话里自动总结技能 |
 
 ---
 
@@ -528,10 +576,13 @@ python bench_nl2sql.py --rebuild
 - [x] MCP 工具接入（独立进程 + streamable-http + 降级）
 - [x] Query 改写（规模阈值控制成本）
 - [x] FastAPI 服务化（lifespan 初始化 + /chat + /health）
+- [x] 技能机制（SKILL.md + 渐进式披露 + 用户自己写技能）
 - [ ] 真 token 级 streaming（需改写 AgentScope 调用层以支持流式 ReAct 循环）
 - [ ] 上下级式多 Agent 协作（Planner + 多 Worker 分工，AgentScope `MsgHub` / `sequential_pipeline`）
 - [ ] RAG 混合检索（BM25 + 向量）与重排序（rerank）
 - [ ] 长期记忆的向量化召回（当前全量回灌，规模变大后需优化）
+- [ ] 技能的多租户隔离与审核流程（当前单租户 + 结构校验兜底）
+- [ ] 让 Agent 主动提议"要不要把这套做法记成技能"（当前必须用户明说）
 - [ ] 更完整的单元测试覆盖 agent / tools
 
 ---

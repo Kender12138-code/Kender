@@ -26,8 +26,9 @@ main.py 入口（--web 走 Gradio / 否则走 CLI）
 ui.py：组装消息（拼接联网偏好提示 + 注入文档内容）→ 调 agent.get_reply
    ↓
 agent.py：
-   1. 拼 system prompt（记忆回灌 + 真实日期 + 工具说明）
+   1. 拼 system prompt（记忆回灌 + 真实日期 + 工具说明 + 技能清单）
    2. ReActAgent 推理 → 自主决定是否调用 search_web
+      （命中某个技能描述时，先调 read_skill 读技能正文，再照着执行）
    3. 提取回复文本
    4. 顺手抽取：用户名字 + key_facts（用户事实）
    ↓
@@ -156,6 +157,32 @@ memory.py：把 user_name / key_facts / chat_history 存成 JSON
 
 ---
 
+### 6. `src/skills.py` —— 技能机制（可扩展性）
+
+**职责**：把"一套做法"变成数据（`SKILL.md`），让 Agent 不改代码就能扩展能力。这是"用户/客户自己写技能"的实现层。
+
+- `_scan()` / `list_skill_details()`：扫两个目录——`skills/`（随仓库发布、进 git）与 `data/skills/`（运行时写出来的）；坏技能只打印警告，不让整个 Agent 起不来。
+- `save_skill_text(name, description, body)`：四道校验（名字正则 / 描述必填限长 / 正文限长 / 总数上限）通过后，写 `data/skills/<name>/SKILL.md`。
+- `register_skills(toolkit)`：调 AgentScope 的 `toolkit.register_agent_skill(dir)`；框架会自动把「技能名 + 描述 + 目录」拼进 system prompt。
+- 三个工具：`list_skills` / `read_skill` / `save_skill`（后两个是工厂函数，见下）。
+
+**关键设计（被追问时讲这三个）**：
+
+1. **渐进式披露**：常驻上下文里只有技能名和描述，正文等模型真的要用了才 `read_skill` 读进来——技能再多也不撑爆上下文。
+2. **动态生效**：`ReActAgent.sys_prompt` 是个属性，每轮回复重新拼接技能清单，所以新存的技能**下一轮就生效**，不用重启。
+3. **多会话安全**：`save_skill` 是工厂函数生成的闭包，绑定各自的 toolkit；用模块级全局变量的话，A 会话存的技能会串到 B 会话去。
+
+**高频追问**：
+
+- Q：这和在 system prompt 里多写几行有什么区别？
+  A：写死在 prompt 里改一次要发版，而且常驻上下文；技能是数据文件，用户自己就能加，正文按需加载。
+- Q：模型自己写技能，不怕它写坏吗？
+  A：四道结构校验 + 只在用户明确要求时才写 + 发布技能不可覆盖。但我不吹"能判断做法好不好"——那需要审核流程，我把它列在已知限制里。
+- Q：多个用户同时用会串吗？
+  A：Web 端每个会话一套 toolkit，工具绑定自己的 toolkit；但技能文件目前是单租户共用一个目录，这条我也写在已知限制里。
+
+---
+
 ## 四、硬核追问清单（建议对着练 3 遍）
 
 1. **ReAct 和普通的"调用一次工具"有什么区别？**
@@ -168,6 +195,8 @@ memory.py：把 user_name / key_facts / chat_history 存成 JSON
    → 诚实说两点：chat_history 还没真正回灌成短期记忆；key_facts 是显式记忆不是真学习。已经在改进计划里。
 5. **为什么选 AgentScope 而不是 LangChain？**
    → AgentScope 对 ReAct Agent 和 Toolkit 的封装更轻、上手快；LangChain 生态大但版本碎片化严重（我另一个 demo 踩过 1.x 的坑）。按场景选。
+6. **你的 Agent 能自己学新能力吗？**
+   → 能学"流程"，不能学"工具"。用户说"记住这套做法"，它会写成 `SKILL.md`（技能），下次命中同类任务先 `read_skill` 读正文再执行，而且存完下一轮就生效；但技能只能组合已有工具，要加新工具仍然得改代码——这个边界我是主动划清的，不是藏着不说。
 
 ---
 

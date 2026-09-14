@@ -5,6 +5,8 @@ gradio>=6.0.0
 # AgentScope 的 ToolResponse / ReActAgent API 跨主版本差异较大，锁定 <2.0.0 防破坏性变更
 agentscope>=1.0.0,<2.0.0
 python-dotenv>=1.0.0
+# 技能机制：解析 SKILL.md 的 YAML front matter（AgentScope 的 register_agent_skill 用的也是这个库）
+python-frontmatter>=1.0.0
 ddgs>=9.0.0
 python-docx>=1.0.0
 PyPDF2>=3.0.0
