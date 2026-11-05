@@ -31,6 +31,19 @@ python eval/runner.py --llm-judge         # 对带 rubric 的题目用 LLM 判�
 | `cases_multiturn.jsonl` | 5 | 跨轮记忆、指代消解、槽位补全、偏好延续 |
 | `cases_edge.jsonl` | 10 | 不存在的地点、空输入、冲突约束、三城并发、中英混排 |
 | `cases_db.jsonl` | 3 | 自然语言查库（NL2SQL）：查订单数、查品类、拒绝删库 |
+| `cases_rag.jsonl` | 5 | 文档检索：预算/负责人/验收日期/人数/未提及的内容 |
+
+RAG 套件需要先建索引，用 `--rag-fixture` 指向一份文档；其余套件建议加
+`--no-rag-index`，避免检索到 `data/faiss_index` 里用户真实的文档而污染结果。
+
+```bash
+# 普通回归（与用户真实数据隔离）
+python eval/runner.py --llm-judge --no-rag-index
+
+# RAG 套件（临时索引，不碰 data/faiss_index）
+python eval/runner.py --cases eval/cases_rag.jsonl \
+  --rag-fixture eval/fixtures/星链项目说明.md --llm-judge
+```
 
 用例字段：
 

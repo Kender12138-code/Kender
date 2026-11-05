@@ -447,6 +447,10 @@ async def main() -> int:
     ap.add_argument("--no-critic", action="store_true")
     ap.add_argument("--llm-judge", action="store_true",
                     help="对带 rubric 的用例启用 LLM 判定（更准，每题多一次模型调用）")
+    ap.add_argument("--rag-fixture", default="",
+                    help="先用这个文件建一个临时 RAG 索引，供 RAG 评测使用（不碰 data/faiss_index）")
+    ap.add_argument("--no-rag-index", action="store_true",
+                    help="把 RAG 索引指到空目录，模拟'用户没上传文档'（评测与真实数据隔离）")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -465,6 +469,27 @@ async def main() -> int:
     run_id = args.out or datetime.now().strftime("run_%Y%m%d_%H%M%S")
     run_dir = Path(__file__).parent / "results" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # 评测默认应与用户真实数据隔离：否则 data/faiss_index 里的简历会被检索到，
+    # 让"这个项目/这个团队"类问题得到与用例无关的答案。
+    if args.no_rag_index:
+        import tempfile
+
+        os.environ["KENDER_RAG_INDEX_DIR"] = tempfile.mkdtemp(prefix="kender_rag_none_")
+        print("[eval] RAG 索引已禁用（指向空目录）")
+
+    # RAG 评测：用指定文档建一个临时索引，通过环境变量指过去。
+    # 这样不会覆盖用户真实上传的 data/faiss_index。
+    if args.rag_fixture:
+        import tempfile
+
+        import src.rag as rag_mod
+
+        text = Path(args.rag_fixture).read_text(encoding="utf-8")
+        idx_dir = tempfile.mkdtemp(prefix="kender_rag_eval_")
+        n_chunks = rag_mod.build_index(text, index_dir=idx_dir)
+        os.environ["KENDER_RAG_INDEX_DIR"] = idx_dir
+        print(f"[eval] 临时 RAG 索引：{n_chunks} 个片段 → {idx_dir}")
 
     meta = {
         "started_at": datetime.now().isoformat(timespec="seconds"),

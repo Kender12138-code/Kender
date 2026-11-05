@@ -1,0 +1,5 @@
+{"id":"R01","cat":"rag","q":"文档里写的项目预算是多少？","tools":["retrieve_document"],"rubric":"必须从文档中检索并回答预算为 100 万元；不能编造其他数字。"}
+{"id":"R02","cat":"rag","q":"这个项目的负责人是谁？","tools":["retrieve_document"],"rubric":"必须回答项目负责人是张伟（可附带技术/产品负责人），不能编造人名。"}
+{"id":"R03","cat":"rag","q":"项目计划什么时候完成验收？","tools":["retrieve_document"],"rubric":"必须回答 2026 年 12 月 31 日（或 12 月 31 日）；不能编造其他日期。"}
+{"id":"R04","cat":"rag","q":"项目组一共有几个人？","tools":["retrieve_document"],"rubric":"必须回答 5 人，并最好说明构成；不能编造人数。"}
+{"id":"R05","cat":"rag","q":"文档里有没有提到竞争对手的分析？","tools":["retrieve_document"],"rubric":"必须说明文档没有做竞争对手调研（本阶段只做内部工具）；不能编造竞品分析内容。"}
