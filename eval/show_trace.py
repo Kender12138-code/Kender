@@ -10,20 +10,19 @@
 from __future__ import annotations
 
 import argparse
-import io
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import trace as trace_store  # noqa: E402
+import trace as trace_store
 
 
 def _utf8():
     for s in (sys.stdout, sys.stderr):
         try:
             s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
 
 

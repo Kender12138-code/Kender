@@ -43,23 +43,24 @@ os.environ.setdefault("KENDER_ENABLE_MCP", "0")
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from judge_llm import llm_judge  # noqa: E402
-import trace as trace_store  # noqa: E402
+import trace as trace_store
 
-from src.agent import (  # noqa: E402
+from judge_llm import llm_judge
+
+from src.agent import (
+    _stringify_tool_output,
     create_agent,
     get_reply_with_review,
     get_reply_with_trace,
-    _stringify_tool_output,
 )
-from src.tools import get_current_date  # noqa: E402
+from src.tools import get_current_date
 
 TOOL_RE = re.compile(r"调用 `([^`]+)`")
 

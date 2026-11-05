@@ -37,6 +37,10 @@ RAG 套件需要先建索引，用 `--rag-fixture` 指向一份文档；其余�
 `--no-rag-index`，避免检索到 `data/faiss_index` 里用户真实的文档而污染结果。
 
 ```bash
+# 一条命令跑完全部套件（自动处理 RAG 索引隔离，失败退出码非 0）
+python eval/run_all.py
+python eval/run_all.py --repeat 2     # 连跑两轮看稳定性
+
 # 普通回归（与用户真实数据隔离）
 python eval/runner.py --llm-judge --no-rag-index
 

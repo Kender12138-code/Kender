@@ -55,14 +55,14 @@ JUDGE_PROMPT = """你是一个严格的 AI 回答评测员。请根据【评分�
 0 = 答非所问、编造事实、越权、或违背了标准里的明确禁令
 """
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.S)
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.DOTALL)
 
 
 def _parse_verdict(text: str) -> dict:
     cleaned = _FENCE_RE.sub("", text.strip())
     data = json.loads(cleaned)
     if not isinstance(data, dict):
-        raise ValueError(f"期望 JSON 对象，实际 {type(data).__name__}")
+        raise TypeError(f"期望 JSON 对象，实际 {type(data).__name__}")
     score = int(data.get("score", 0))
     return {"score": max(0, min(2, score)), "reason": str(data.get("reason", ""))[:60]}
 
