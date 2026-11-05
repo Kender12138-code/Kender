@@ -1,7 +1,7 @@
 {"id":"W01","cat":"weather","q":"上海今天天气怎么样？","tools":["get_weather"],"any":[["上海"],["度","℃","气温"]]}
 {"id":"W02","cat":"weather","q":"北京现在多少度？","tools":["get_weather"],"any":[["北京"],["度","℃","气温"]]}
 {"id":"W03","cat":"weather","q":"杭州今天要带伞吗？","tools":["get_weather"],"any":[["杭州"],["伞","雨"]]}
-{"id":"W04","cat":"weather","q":"广州明天热不热？","tools":["get_weather"],"any":[["广州"],["度","℃","气温","热"]]}
+{"id":"W04","cat":"weather","q":"广州今天热不热？","tools":["get_weather"],"any":[["广州"],["度","℃","气温","热"]]}
 {"id":"W05","cat":"weather","q":"深圳天气怎么样？","tools":["get_weather"],"any":[["深圳"],["度","℃","气温"]]}
 {"id":"S01","cat":"search","q":"最近有什么 AI 大新闻？","tools":["search_web"],"any":[["AI","人工智能"]]}
 {"id":"S02","cat":"search","q":"2026 年诺贝尔物理学奖颁给了谁？","tools":["search_web"],"any":[["诺贝尔"]]}

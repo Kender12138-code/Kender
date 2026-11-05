@@ -346,6 +346,13 @@ def write_report(run_dir: Path, results: list[dict], meta: dict) -> None:
     lines.append("")
     lines.append(f"**有效通过率：{len(passed)}/{len(scored)} = "
                  f"{len(passed) / max(len(scored), 1):.0%}**")
+    if scored:
+        lat = sorted(r["latency_s"] for r in scored)
+        p50 = lat[min(len(lat) - 1, int(len(lat) * 0.5))]
+        p95 = lat[min(len(lat) - 1, int(len(lat) * 0.95))]
+        lines.append("")
+        lines.append(f"- 延迟：P50 {p50:.1f}s / P95 {p95:.1f}s / "
+                     f"平均 {sum(lat) / len(lat):.1f}s / 最慢 {lat[-1]:.1f}s")
     if infra:
         lines.append("")
         lines.append(f"> 另有 {len(infra)} 条因工具层错误（搜索超时等）未计入，"

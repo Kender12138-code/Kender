@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -214,6 +215,10 @@ def create_agent(memory):
     model = DashScopeChatModel(
         model_name="qwen-plus",
         api_key=os.getenv("DASHSCOPE_API_KEY"),
+        # 温度默认 0.3：默认采样温度下，同一个问题多次运行会时而调工具、
+        # 时而凭记忆作答（eval 里 MT03/H02 都复现过）。工具调用类任务要的是
+        # 稳定，不是文采。想更自然可以设 KENDER_TEMPERATURE=0.7。
+        generate_kwargs={"temperature": float(os.getenv("KENDER_TEMPERATURE", "0.3"))},
     )
     agent = ReActAgent(
         name="Kender",
@@ -239,6 +244,10 @@ def create_agent(memory):
   这类推断。同理，问历史数据时也不能用当前值代替。
 - 【多任务不遗漏】用户一句话里提了多个请求（例如"先查北京天气，再查上海天气"），
   必须逐项完成、分别取证，再合并成一条回答；不允许只做其中一件就下结论。
+- 【追问后必须执行】如果上一轮你向用户追问了缺少的参数，而用户这一轮把答案给了，
+  必须立刻用补全后的参数调用工具，禁止再问一遍同样的问题。
+  例：用户说"帮我查下天气" → 你追问"哪个城市？" → 用户回"上海" →
+  你必须立刻调用 get_weather(city="上海")，而不是再问一次城市。
 - 【填槽规则】调用任何工具前，先检查必需参数是否齐全。如果用户没有提供某个必需参数（例如没说查哪个城市、没说提醒什么内容或什么时间），
   禁止猜测、禁止使用默认值、禁止跳过该参数，必须先向用户追问补全，等用户回答后再调用工具。
 - 【技能规则】系统提示词末尾会列出你已经拥有的技能。当用户的任务命中某个技能的描述时，必须先调 read_skill 读出它的完整步骤，再照着执行，不要凭印象做。
@@ -525,17 +534,32 @@ async def _capture_trace(agent, msg):
         return f"（轨迹提取失败：{e}）", 0
 
 
+# 单轮最大处理时间（秒）。模型或工具卡住时不能无限等，
+# 否则 Web 端一个请求就能把 worker 占死。可用环境变量调大。
+TURN_TIMEOUT = float(os.getenv("KENDER_TURN_TIMEOUT", "120"))
+
+
 async def _run_once(agent, model, message):
     """跑一轮 ReAct，返回 (回复文本, 轨迹文本, 工具调用次数)。
 
     只负责"跑"，不写长期记忆 —— 这样 Critic 打回重写时，
     中间被否决的版本不会污染记忆文件。
+
+    加了 asyncio.wait_for：模型/工具卡住时抛 TimeoutError，
+    转成一句可读的提示返回，而不是让整个请求无限挂起。
     """
     full_message = f"{get_current_date()}\n\n用户的问题：{message}"
     msg = Msg(name="user", role="user", content=full_message)
     msg.id = f"msg_{int(datetime.now().timestamp())}"
     try:
-        reply = await agent.reply(msg)
+        reply = await asyncio.wait_for(agent.reply(msg), timeout=TURN_TIMEOUT)
+    except asyncio.TimeoutError:
+        return (
+            f"⚠️ 这一轮处理超时了（超过 {TURN_TIMEOUT:.0f} 秒）。"
+            "可能是网络或工具响应慢，请稍后重试，或把问题拆小一点。",
+            "",
+            0,
+        )
     except Exception as e:
         return (
             f"⚠️ 抱歉，调用模型时出错了：{e}。请检查网络或 DASHSCOPE_API_KEY 后重试。",
@@ -734,6 +758,45 @@ def _is_realtime_question(text: str) -> bool:
     return any(k in text for k in _REALTIME_QUESTION_MARKERS)
 
 
+async def _anchor_short_followup(agent, message: str) -> str:
+    """用户只回一个短词（如"上海"）时，把上下文显式写进提示词。
+
+    为什么需要：多轮填槽时，用户上一轮被追问"哪个城市？"，这轮只回"上海"。
+    实测 qwen-plus 有约一半概率把"上海"当成新问题、又把同一个问题问一遍
+    （eval 的 MT03 稳定复现）。单靠系统提示里的规则约束不住，
+    于是把「上一轮在追问、这轮是答案」这个事实直接写进本轮输入。
+    """
+    msg = (message or "").strip()
+    if not msg or len(msg) > 12 or any(p in msg for p in "。！？?!"):
+        return message
+    try:
+        mem = await agent.memory.get_memory()
+    except Exception:  # noqa: BLE001
+        return message
+
+    last_assistant = ""
+    for m in reversed(mem):
+        if getattr(m, "role", None) != "assistant":
+            continue
+        blocks = getattr(m, "content", None)
+        if isinstance(blocks, list):
+            last_assistant = "".join(
+                str(b.get("text", ""))
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
+            ).strip()
+        elif isinstance(blocks, str):
+            last_assistant = blocks.strip()
+        break
+
+    if not last_assistant.endswith(("？", "?")):
+        return message
+    return (
+        f"（上一轮你在向用户追问必要参数，用户这轮的回答是：{msg}。"
+        f"请据此补全参数并直接调用工具，不要再重复提问。）\n{msg}"
+    )
+
+
 async def get_reply_with_review(
     agent, model, user_message, memory, max_retries: int = 2, persist: bool = True
 ):
@@ -752,7 +815,7 @@ async def get_reply_with_review(
     Returns:
         (回复文本, 轨迹文本, 审核结论, 实际生成轮数)
     """
-    message = user_message
+    message = await _anchor_short_followup(agent, user_message)
     rounds = 0
     # 打回重写时，后续轮次可能不再调工具（凭 ReAct 记忆直接重写），
     # 那样轨迹会变成"本轮没有调用工具"。这里保留最后一个真正用过工具的轨迹。
