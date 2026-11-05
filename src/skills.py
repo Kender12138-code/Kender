@@ -17,6 +17,7 @@ sys_prompt 属性）；模型判断要用某个技能时，再调 read_skill 读
 """
 from __future__ import annotations
 
+import os
 import re
 import json
 import shutil
@@ -28,7 +29,9 @@ from agentscope.tool import ToolResponse
 from .paths import data_path, ensure_data_dir
 
 SHIPPED_SKILLS_DIR = str(Path(__file__).resolve().parents[1] / "skills")
-CUSTOM_SKILLS_DIR = data_path("skills")
+# 用户技能目录：环境变量优先，方便评测/多租户把技能写到隔离目录里，
+# 不去污染真实的 data/skills/。
+CUSTOM_SKILLS_DIR = os.getenv("KENDER_SKILLS_DIR") or data_path("skills")
 
 MAX_SKILLS = 50
 MAX_BODY_CHARS = 8000

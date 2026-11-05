@@ -452,6 +452,8 @@ async def main() -> int:
                     help="先用这个文件建一个临时 RAG 索引，供 RAG 评测使用（不碰 data/faiss_index）")
     ap.add_argument("--no-rag-index", action="store_true",
                     help="把 RAG 索引指到空目录，模拟'用户没上传文档'（评测与真实数据隔离）")
+    ap.add_argument("--isolate-skills", action="store_true",
+                    help="把用户技能目录指到临时目录，避免评测读写真实 data/skills")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -470,6 +472,17 @@ async def main() -> int:
     run_id = args.out or datetime.now().strftime("run_%Y%m%d_%H%M%S")
     run_dir = Path(__file__).parent / "results" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # 技能评测会写文件，必须隔离到临时目录，别污染真实的 data/skills。
+    if args.isolate_skills:
+        import tempfile
+
+        import src.skills as skills_mod
+
+        # 直接改模块级常量：skills 里的函数都在调用时读这个全局，
+        # 运行期替换就能生效（此刻再改环境变量已经晚了，模块早就导入了）。
+        skills_mod.CUSTOM_SKILLS_DIR = tempfile.mkdtemp(prefix="kender_skills_eval_")
+        print(f"[eval] 技能目录已隔离：{skills_mod.CUSTOM_SKILLS_DIR}")
 
     # 评测默认应与用户真实数据隔离：否则 data/faiss_index 里的简历会被检索到，
     # 让"这个项目/这个团队"类问题得到与用例无关的答案。

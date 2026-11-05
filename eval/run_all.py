@@ -28,6 +28,7 @@ SUITES = [
     ("多轮", EVAL_DIR / "cases_multiturn.jsonl", ["--no-rag-index"]),
     ("边界", EVAL_DIR / "cases_edge.jsonl", ["--no-rag-index"]),
     ("查库", EVAL_DIR / "cases_db.jsonl", ["--no-rag-index"]),
+    ("技能", EVAL_DIR / "cases_skill.jsonl", ["--no-rag-index"]),
     (
         "文档",
         EVAL_DIR / "cases_rag.jsonl",
@@ -45,7 +46,8 @@ def _utf8():
 
 
 def run_suite(name: str, cases: Path, extra: list[str], quiet: bool) -> tuple[int, int]:
-    cmd = [sys.executable, str(RUNNER), "--cases", str(cases), "--llm-judge", *extra]
+    cmd = [sys.executable, str(RUNNER), "--cases", str(cases), "--llm-judge",
+           "--isolate-skills", *extra]
     proc = subprocess.run(
         cmd,
         cwd=str(EVAL_DIR.parent),
