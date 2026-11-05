@@ -8,7 +8,11 @@ agentscope>=1.0.0,<2.0.0
 # 但它的包元数据里 sqlalchemy 是可选依赖，不会自动装上。
 # 少了这一行，全新环境里 `import agentscope` 直接 ModuleNotFoundError
 # （本地能跑只是因为机器上碰巧先装过，CI 上 1 秒就挂在这里）。
-sqlalchemy>=2.0.0
+#
+# 为什么带 [asyncio] 而不是裸 sqlalchemy：`sqlalchemy.ext.asyncio` 依赖 greenlet，
+# 而 greenlet 也是可选依赖。裸装 sqlalchemy 后 import 仍会报
+# ModuleNotFoundError: No module named 'greenlet'（CI #3 就卡在这一步）。
+sqlalchemy[asyncio]>=2.0.0
 python-dotenv>=1.0.0
 # 技能机制：解析 SKILL.md 的 YAML front matter（AgentScope 的 register_agent_skill 用的也是这个库）
 python-frontmatter>=1.0.0

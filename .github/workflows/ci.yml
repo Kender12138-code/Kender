@@ -42,15 +42,19 @@ jobs:
         # 全部离线：搜索/嵌入/模型调用都被 mock 或替换，
         # 不需要 DASHSCOPE_API_KEY，CI 里也不该有。
         #
-        # 失败时把最后 20 行写成 ::error:: 注解 —— 这样即使没有管理员权限
-        # 下载日志，也能通过 check-run annotations API 读到真正的报错。
+        # 失败时把关键行写成 ::error:: 注解 —— 即使没有管理员权限下载日志，
+        # 也能通过 check-run annotations API 读到真正的报错。
+        # ⚠️ GitHub 每个步骤只保留前 10 条注解，所以先发最重要的：
+        # 1) 最后一行（异常类型 + 消息） 2) pytest 的 FAILED/ERROR 汇总行
         run: |
           set +e
           pytest -q --maxfail=1 > pytest.log 2>&1
           code=$?
           cat pytest.log
           if [ $code -ne 0 ]; then
-            tail -n 20 pytest.log | while IFS= read -r line; do
+            last=$(tail -n 1 pytest.log)
+            echo "::error::${last}"
+            grep -E "^(E   |FAILED|ERROR)" pytest.log | tail -n 8 | while IFS= read -r line; do
               echo "::error::${line}"
             done
             exit $code
