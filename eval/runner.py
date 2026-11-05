@@ -309,6 +309,44 @@ async def run_case(case: dict, use_critic: bool, judge_model=None) -> dict:
         tool_error = True
     result = judge(case, reply, tools, tool_count)
 
+    # 多轮用例的逐轮判定：原来只看最后一轮，中间轮答错会漏掉。
+    # turn_expect 支持每轮写 any（必须命中的关键词组）和 not（禁止出现的词）。
+    turn_failures: list[str] = []
+    for idx, spec in enumerate(case.get("turn_expect") or [], start=1):
+        if idx - 1 >= len(replies):
+            break
+        text = replies[idx - 1]
+        for group in spec.get("any", []):
+            if not any(kw in text for kw in group):
+                turn_failures.append(f"第{idx}轮缺要点：{'|'.join(group)}")
+        for kw in spec.get("not", []):
+            if kw in text:
+                turn_failures.append(f"第{idx}轮出现禁词：{kw}")
+        # 需要判断"语义上有没有做到"的轮次，用 rubric 交给 LLM 判
+        # （关键词判不了"推荐了不含香菜的菜"这种）
+        if spec.get("rubric") and judge_model is not None:
+            # 判定器必须看到前几轮的上下文：只看本轮"推荐一道菜"，
+            # 会以为助手凭空编出"不吃香菜"这个前提（实测踩过）。
+            context = "；".join(turns[: idx - 1])
+            judge_question = (
+                f"（前情）用户之前说过：{context}\n（本轮）用户说：{turns[idx - 1]}"
+                if context
+                else turns[idx - 1]
+            )
+            v = await llm_judge(
+                judge_model,
+                judge_question,
+                text,
+                spec["rubric"],
+                evidence,
+                today=get_current_date(),
+            )
+            if not v["ok"]:
+                turn_failures.append(f"第{idx}轮判分 {v['score']}/2：{v['reason']}")
+    result["turn_failures"] = turn_failures
+    if turn_failures:
+        result["passed"] = False
+
     # 有 rubric 的语义题交给 LLM 判定（规则判关键词会误伤）
     if judge_model is not None and case.get("rubric"):
         verdict = await llm_judge(
@@ -322,7 +360,12 @@ async def run_case(case: dict, use_critic: bool, judge_model=None) -> dict:
         result["llm_score"] = verdict["score"]
         result["llm_reason"] = verdict["reason"]
         result["point_ok"] = verdict["ok"]
-        result["passed"] = result["tool_ok"] and result["clean_ok"] and verdict["ok"]
+        result["passed"] = (
+            result["tool_ok"]
+            and result["clean_ok"]
+            and verdict["ok"]
+            and not result.get("turn_failures")
+        )
     else:
         result["llm_score"] = None
         result["llm_reason"] = ""

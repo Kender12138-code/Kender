@@ -1,5 +1,8 @@
-{"id":"MT01","cat":"multiturn","turns":["我叫杨恺","我叫什么名字？"],"tools":[],"any":[["杨恺"]]}
-{"id":"MT02","cat":"multiturn","turns":["上海天气怎么样？","那北京呢？"],"tools":["get_weather"],"min_tools":2,"any":[["北京"]]}
-{"id":"MT03","cat":"multiturn","turns":["帮我查一下天气","上海"],"tools":["get_weather"],"any":[["上海"]]}
-{"id":"MT04","cat":"multiturn","turns":["我喜欢喝美式咖啡","推荐一杯咖啡"],"tools":[],"any":[["美式"]]}
-{"id":"MT05","cat":"multiturn","turns":["上海天气怎么样","我是说深圳"],"tools":["get_weather"],"any":[["深圳"]]}
+{"id":"MT01","cat":"multiturn","turns":["我叫杨恺","我叫什么名字？"],"tools":[],"any":[["杨恺"]],"turn_expect":[{"any":[["杨恺","你好","很高兴","记住"]]},{"any":[["杨恺"]]}]}
+{"id":"MT02","cat":"multiturn","turns":["上海天气怎么样？","那北京呢？"],"tools":["get_weather"],"min_tools":2,"any":[["北京"]],"turn_expect":[{"any":[["上海"],["度","℃","气温"]]},{"any":[["北京"],["度","℃","气温"]]}]}
+{"id":"MT03","cat":"multiturn","turns":["帮我查一下天气","上海"],"tools":["get_weather"],"any":[["上海"]],"turn_expect":[{"any":[["城市","哪里","哪个"]]},{"any":[["上海"],["度","℃","气温"]]}]}
+{"id":"MT04","cat":"multiturn","turns":["我喜欢喝美式咖啡","推荐一杯咖啡"],"tools":[],"any":[["美式"]],"turn_expect":[{"any":[["美式","记住","好的","明白"]]},{"any":[["美式"]]}]}
+{"id":"MT05","cat":"multiturn","turns":["上海天气怎么样","我是说深圳"],"tools":["get_weather"],"any":[["深圳"]],"turn_expect":[{"any":[["上海"]]},{"any":[["深圳"]]}]}
+{"id":"MT06","cat":"multiturn","turns":["我不吃香菜，其他都行","推荐一道菜"],"tools":[],"any":[["推荐","菜","可以"]],"turn_expect":[{"any":[["香菜","记住","好的","明白"]]},{"rubric":"必须推荐一道具体菜品，且这道菜不以香菜为主要食材或配料；明确说'不含香菜/不放香菜'属于正确做法，不算违规。"}]}
+{"id":"MT07","cat":"multiturn","turns":["记一下，我的工号是 A1234","我的工号是多少？"],"tools":[],"any":[["A1234","1234"]],"turn_expect":[{"any":[["A1234","1234","记"]]},{"any":[["A1234","1234"]]}]}
+{"id":"MT08","cat":"multiturn","turns":["今天天气怎么样？","北京"],"tools":["get_weather"],"any":[["北京"]],"turn_expect":[{"any":[["城市","哪里","哪个"]]},{"any":[["北京"],["度","℃","气温"]]}]}

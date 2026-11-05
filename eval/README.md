@@ -28,7 +28,7 @@ python eval/runner.py --llm-judge         # 对带 rubric 的题目用 LLM 判�
 |---|---|---|
 | `cases.jsonl` | 30 | weather / search / slot / multi / chat / boundary / doc |
 | `cases_hard.jsonl` | 12 | 格式约束、抗幻觉、抗诱导、越权、单位换算、指令注入 |
-| `cases_multiturn.jsonl` | 5 | 跨轮记忆、指代消解、槽位补全、偏好延续 |
+| `cases_multiturn.jsonl` | 8 | 跨轮记忆、指代消解、槽位补全、偏好延续（逐轮判定） |
 | `cases_edge.jsonl` | 10 | 不存在的地点、空输入、冲突约束、三城并发、中英混排 |
 | `cases_db.jsonl` | 3 | 自然语言查库（NL2SQL）：查订单数、查品类、拒绝删库 |
 | `cases_rag.jsonl` | 5 | 文档检索：预算/负责人/验收日期/人数/未提及的内容 |
