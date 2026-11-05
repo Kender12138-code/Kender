@@ -231,6 +231,14 @@ def create_agent(memory):
 
 工具调用规则：
 - 先调用工具获取结果，再用简洁、自然的语言回答。如果工具调用失败或返回空，请如实说明，不要编造。
+- 【实时信息必须取证】凡是会随时间变化的信息（天气、气温、股价、指数、汇率、新闻、比分、航班），
+  必须先调用对应工具；没有工具返回结果时，只能说"暂时查不到"，禁止给出具体数值，
+  也禁止使用工具的返回格式（如"城市: 图标 温度"）自行拼接一条数据。
+- 【不得外推】用户问的是未来（明天、下周、未来几天）而工具只能返回当前值时，
+  必须说明"拿不到该时段的数据"，禁止把当前值当成预报，也禁止给出"明天同样是 X"
+  这类推断。同理，问历史数据时也不能用当前值代替。
+- 【多任务不遗漏】用户一句话里提了多个请求（例如"先查北京天气，再查上海天气"），
+  必须逐项完成、分别取证，再合并成一条回答；不允许只做其中一件就下结论。
 - 【填槽规则】调用任何工具前，先检查必需参数是否齐全。如果用户没有提供某个必需参数（例如没说查哪个城市、没说提醒什么内容或什么时间），
   禁止猜测、禁止使用默认值、禁止跳过该参数，必须先向用户追问补全，等用户回答后再调用工具。
 - 【技能规则】系统提示词末尾会列出你已经拥有的技能。当用户的任务命中某个技能的描述时，必须先调 read_skill 读出它的完整步骤，再照着执行，不要凭印象做。
@@ -691,6 +699,41 @@ def _looks_like_echo(reply: str, tool_text: str) -> bool:
     return len(r) <= 40 and r in t
 
 
+# 实时数据的强特征词：只有这些词 + 数字同时出现，才认为模型在做"具体断言"
+_REALTIME_MARKERS = ("℃", "°C", "气温", "温度", "股价", "指数", "汇率")
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _looks_like_realtime_claim(reply: str) -> bool:
+    """回答里是否出现了"实时数据型"的具体断言。
+
+    用来抓一类最危险的编造：用户问天气/股价，模型既不调工具，又直接给出
+    具体数值——甚至照抄工具返回的格式（`上海: 🌦️ 18°C`）。
+    这种回答表面最像真的，实际是凭空捏的，比明显的胡话危害更大。
+
+    只做粗筛：要求"数字 + 强特征词"同时出现，避免把闲聊误判成断言。
+    """
+    if not reply:
+        return False
+    return bool(_DIGIT_RE.search(reply)) and any(m in reply for m in _REALTIME_MARKERS)
+
+
+# 用户的"实时类问题"特征。必须是问题本身在问实时信息，才值得触发取证检查。
+# 只看回答会把"举例说明"误判成编造（比如回答里写"比如上海 18°C"）。
+_REALTIME_QUESTION_MARKERS = (
+    "天气", "气温", "温度", "几度", "多少度",
+    "股价", "股票", "指数", "汇率", "大盘",
+    "新闻", "热搜", "比分", "航班",
+)
+
+
+def _is_realtime_question(text: str) -> bool:
+    """用户这句话是否在问实时/易变信息。"""
+    if not text:
+        return False
+    return any(k in text for k in _REALTIME_QUESTION_MARKERS)
+
+
 async def get_reply_with_review(
     agent, model, user_message, memory, max_retries: int = 2, persist: bool = True
 ):
@@ -724,6 +767,34 @@ async def get_reply_with_review(
             last_tool_outputs = await _collect_tool_outputs(agent)
 
         echoed = _looks_like_echo(reply_text, last_tool_outputs)
+
+        # 【无工具却给出实时数据】——最隐蔽的一类编造。
+        # 模型有时不调工具，直接照抄 get_weather 的返回格式编一条（如"上海: 🌦️ 18°C"）。
+        # 这种情况原来会走进下面的"没调工具→跳过审核"分支，假数据直接放行。
+        # 这里改成强制重写：明确要求先取证再回答。
+        if (
+            tool_calls == 0
+            and _is_realtime_question(user_message)
+            and _looks_like_realtime_claim(reply_text)
+        ):
+            if attempt < max_retries:
+                message = (
+                    f"{user_message}\n\n"
+                    "[系统检查] 你刚才没有调用任何工具，却给出了具体数值。"
+                    "这类实时信息必须调用工具获取，禁止凭记忆或推测作答，"
+                    "也不允许照抄工具的返回格式自行拼接数据。"
+                    "请重新回答：先调用对应工具，再基于工具返回的结果作答；"
+                    "如果工具不可用，就如实说明查不到。"
+                )
+                print(f"[guard] 第 {rounds} 轮：无工具却含实时数据，强制重写")
+                continue
+            # 已经用完重试次数，仍然是无依据的数据 → 判定不合格，交上层处理
+            return (
+                reply_text,
+                last_trace_with_tools or trace,
+                CriticVerdict(passed=False, reason="未调用工具却给出具体实时数据，属编造"),
+                rounds,
+            )
 
         if tool_calls == 0 and not echoed:
             # 没调工具 = 闲聊或正在追问用户，没必要审核

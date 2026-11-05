@@ -1,13 +1,94 @@
+import html
 import json
 import os
+import re
+import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
 from ddgs import DDGS
 from agentscope.tool import ToolResponse
 
 from .paths import data_path, ensure_data_dir
 
 REMINDER_FILE = data_path("reminders.json")
+
+
+def _retry(fn, attempts: int = 3, base_delay: float = 0.6):
+    """带指数退避的重试。
+
+    为什么需要：wttr.in 和 DuckDuckGo 都是公共免费服务，偶发 5xx / 超时很常见。
+    一次失败就告诉用户"查不到"，体验很差，而且会让 eval 把基础设施抖动
+    误算成模型能力问题。重试 2–3 次成本极低，能消掉大部分抖动。
+    """
+    last_err = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if i < attempts - 1:
+                time.sleep(base_delay * (i + 1))
+    raise last_err  # type: ignore[misc]
+
+
+def _do_ddg_search(query: str, max_results: int) -> list[dict]:
+    """DuckDuckGo（ddgs 聚合多后端）。慢但覆盖广，作为兜底。"""
+    with DDGS() as ddgs:
+        return list(ddgs.text(query, max_results=max_results))
+
+
+_BING_URL = "https://cn.bing.com/search?q={q}&count=10"
+_BING_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+_BLOCK_RE = re.compile(r'<li class="b_algo".*?</li>', re.S)
+_TITLE_RE = re.compile(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+_SNIPPET_RE = re.compile(r"<p[^>]*>(.*?)</p>", re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_html(s: str) -> str:
+    return html.unescape(_TAG_RE.sub("", s)).strip()
+
+
+def _parse_bing_html(page: str, max_results: int) -> list[dict]:
+    """从 Bing 结果页里抽标题/摘要/链接（纯函数，方便离线单测）。
+
+    为什么不用 BeautifulSoup：项目不想为了一个搜索加依赖，
+    Bing 的结果块结构很稳定（li.b_algo > h2 > a + p），正则足够。
+    """
+    out: list[dict] = []
+    for block in _BLOCK_RE.findall(page):
+        m = _TITLE_RE.search(block)
+        if not m:
+            continue
+        href, title = m.group(1), _clean_html(m.group(2))
+        if not title:
+            continue
+        sm = _SNIPPET_RE.search(block)
+        body = _clean_html(sm.group(1)) if sm else ""
+        out.append({"title": title, "body": body, "href": href})
+        if len(out) >= max_results:
+            break
+    return out
+
+
+def _do_bing_search(query: str, max_results: int) -> list[dict]:
+    """Bing 网页结果（实测 0.5 秒，比 ddgs 的 15 秒快一个数量级）。"""
+    req = Request(_BING_URL.format(q=quote(query)), headers={"User-Agent": _BING_UA})
+    with urlopen(req, timeout=8) as resp:
+        page = resp.read().decode("utf-8", "ignore")
+    return _parse_bing_html(page, max_results)
+
+
+# 搜索结果缓存：同一 query 在 TTL 内直接返回。
+# 真实使用中"再查一次刚才那个"很常见，缓存能把 15 秒变成 0 秒。
+_SEARCH_CACHE: dict[str, tuple[float, str]] = {}
+_SEARCH_TTL = 600
 
 
 def search_web(query: str, max_results: int = 3) -> ToolResponse:
@@ -26,21 +107,43 @@ def search_web(query: str, max_results: int = 3) -> ToolResponse:
         ToolResponse 对象或生成器）。content 使用字典列表，与 AgentScope
         内部对 TextBlock 的序列化格式保持一致。
     """
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-            if not results:
-                text = "没有找到相关信息。"
+    cache_key = f"{query}|{max_results}"
+    hit = _SEARCH_CACHE.get(cache_key)
+    if hit and time.time() - hit[0] < _SEARCH_TTL:
+        return ToolResponse(content=[{"type": "text", "text": hit[1]}])
+
+    providers = os.getenv("KENDER_SEARCH_PROVIDERS", "bing,ddg").split(",")
+    results: list[dict] = []
+    errors: list[str] = []
+    for name in (p.strip() for p in providers if p.strip()):
+        try:
+            if name == "bing":
+                results = _retry(
+                    lambda: _do_bing_search(query, max_results), attempts=2, base_delay=0.3
+                )
+            elif name == "ddg":
+                results = _retry(
+                    lambda: _do_ddg_search(query, max_results), attempts=1
+                )
             else:
-                output = []
-                for i, r in enumerate(results, 1):
-                    output.append(f"{i}. {r.get('title', '无标题')}")
-                    output.append(f"   {r.get('body', '无摘要')[:200]}...")
-                    output.append(f"   来源：{r.get('href', '')}")
-                    output.append("")
-                text = "\n".join(output)
-    except Exception as e:
-        text = f"搜索出错：{e}"
+                continue
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{name}: {e}")
+            results = []
+        if results:
+            break
+
+    if not results:
+        text = f"搜索出错：{'；'.join(errors)}" if errors else "没有找到相关信息。"
+    else:
+        output = []
+        for i, r in enumerate(results, 1):
+            output.append(f"{i}. {r.get('title', '无标题')}")
+            output.append(f"   {r.get('body', '无摘要')[:200]}...")
+            output.append(f"   来源：{r.get('href', '')}")
+            output.append("")
+        text = "\n".join(output)
+        _SEARCH_CACHE[cache_key] = (time.time(), text)
 
     return ToolResponse(content=[{"type": "text", "text": text}])
 
@@ -49,7 +152,7 @@ def get_weather(city: str) -> ToolResponse:
     """查询指定城市的实时天气。
 
     当用户询问某地天气、气温、下雨、天气怎么样时，优先调用本工具获取实时结果。
-    返回格式：城市 + 天气图标 + 温度，例如"上海: 🌦️  +31°C"。
+    返回一行文本，包含城市、天气图标与温度。
 
     Args:
         city: 城市名称，必填，例如"上海"、"北京"。
@@ -59,12 +162,18 @@ def get_weather(city: str) -> ToolResponse:
     Returns:
         ToolResponse: 实时天气简要信息。
     """
-    try:
-        from urllib.parse import quote
-        from urllib.request import urlopen
+    def _fetch():
+        req = Request(
+            f"https://wttr.in/{quote(city)}?format=3",
+            headers={"User-Agent": "Kender/1.0"},
+        )
+        with urlopen(req, timeout=8) as resp:
+            return resp.read().decode("utf-8").strip()
 
-        with urlopen(f"https://wttr.in/{quote(city)}?format=3", timeout=10) as resp:
-            text = resp.read().decode("utf-8").strip()
+    try:
+        text = _retry(_fetch, attempts=3, base_delay=0.5)
+        if not text:
+            text = f"天气查询失败：{city} 没有返回数据"
     except Exception as e:
         text = f"天气查询失败：{e}"
 

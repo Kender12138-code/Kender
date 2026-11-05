@@ -42,9 +42,12 @@ def test_get_current_date_format():
     assert "年" in d and "月" in d
 
 
-def test_search_web_returns_tool_response():
+def test_search_web_returns_tool_response(monkeypatch):
     from unittest.mock import patch
 
+    # search_web 现在是「Bing 优先、DDG 兜底」，这里强制走被 mock 的 DDG 分支
+    monkeypatch.setenv("KENDER_SEARCH_PROVIDERS", "ddg")
+    monkeypatch.setattr("src.tools._SEARCH_CACHE", {})
     fake = [{"title": "示例标题", "body": "示例摘要内容", "href": "https://example.com"}]
     with patch("src.tools.DDGS") as MockDDGS:
         inst = MockDDGS.return_value.__enter__.return_value
@@ -55,9 +58,11 @@ def test_search_web_returns_tool_response():
     assert "示例标题" in res.content[0]["text"]
 
 
-def test_search_web_handles_empty():
+def test_search_web_handles_empty(monkeypatch):
     from unittest.mock import patch
 
+    monkeypatch.setenv("KENDER_SEARCH_PROVIDERS", "ddg")
+    monkeypatch.setattr("src.tools._SEARCH_CACHE", {})
     with patch("src.tools.DDGS") as MockDDGS:
         inst = MockDDGS.return_value.__enter__.return_value
         inst.text.return_value = []

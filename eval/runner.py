@@ -48,12 +48,18 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from judge_llm import llm_judge  # noqa: E402
+import trace as trace_store  # noqa: E402
 
 from src.agent import (  # noqa: E402
     create_agent,
     get_reply_with_review,
     get_reply_with_trace,
+    _stringify_tool_output,
 )
+from src.tools import get_current_date  # noqa: E402
 
 TOOL_RE = re.compile(r"调用 `([^`]+)`")
 
@@ -73,7 +79,10 @@ def parse_tools(trace: str) -> list[str]:
     return out
 
 
-TOOL_ERROR_MARKERS = ("timed out", "Timeout", "timeout", "连接失败", "ECONN", "Connection")
+TOOL_ERROR_MARKERS = (
+    "timed out", "Timeout", "timeout", "连接失败", "ECONN", "Connection",
+    "搜索出错", "天气查询失败", "URLError", "getaddrinfo", "SSLError", "HTTP Error",
+)
 # 平台侧错误：DashScope 内容审核拦截、限流、网关 5xx 等
 API_ERROR_MARKERS = (
     "DataInspectionFailed",
@@ -84,22 +93,23 @@ API_ERROR_MARKERS = (
 )
 
 
-async def inspect_memory(agent) -> tuple[list[str], bool]:
-    """直接从 agent.memory 提取本轮所有工具调用（跨重试累积）。
+async def inspect_memory(agent) -> tuple[list[str], bool, int]:
+    """直接从 agent.memory 提取本轮所有工具调用（跨重试、跨轮次累积）。
 
     为什么不用返回的 trace：Critic 打回重写时，第二轮往往不再调工具，
     trace 只反映最后一轮，会把"调用过工具"误判成"没调"。
     memory 是累积的，取并集才准。
 
     Returns:
-        (工具名列表, 是否发生工具层错误)
+        (工具名列表, 是否发生工具层错误, 工具调用总次数)
     """
     tools: list[str] = []
     outputs: list[str] = []
+    calls = 0
     try:
         mem = await agent.memory.get_memory()
     except Exception:  # noqa: BLE001
-        return [], False
+        return [], False, 0
     for m in mem:
         content = getattr(m, "content", None)
         if not isinstance(content, list):
@@ -108,15 +118,49 @@ async def inspect_memory(agent) -> tuple[list[str], bool]:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_use":
+                calls += 1
                 name = b.get("name")
                 if name and name not in tools:
                     tools.append(name)
             elif b.get("type") == "tool_result":
                 out = b.get("output")
-                outputs.append(out if isinstance(out, str) else json.dumps(out, ensure_ascii=False))
+                outputs.append(out if isinstance(out, str) else _stringify_tool_output(out))
     blob = "\n".join(outputs)
     tool_error = any(k in blob for k in TOOL_ERROR_MARKERS)
-    return tools, tool_error
+    evidence = "\n---\n".join(o[:600] for o in outputs[-4:])
+    return tools, tool_error, calls, evidence
+
+
+async def collect_steps(agent) -> list[dict]:
+    """把 memory 里的 tool_use / tool_result 配对成可入库的步骤列表。"""
+    try:
+        mem = await agent.memory.get_memory()
+    except Exception:  # noqa: BLE001
+        return []
+    steps: list[dict] = []
+    pending: dict[str, dict] = {}
+    for m in mem:
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                item = {
+                    "tool": b.get("name"),
+                    "args": json.dumps(b.get("input") or {}, ensure_ascii=False),
+                    "output": "",
+                }
+                pending[b.get("id")] = item
+                steps.append(item)
+            elif b.get("type") == "tool_result":
+                item = pending.get(b.get("id"))
+                if item is not None:
+                    item["output"] = _stringify_tool_output(b.get("output"))[:1500]
+    for i, s in enumerate(steps, 1):
+        s["step"] = i
+    return steps
 
 
 def load_cases(path: Path) -> list[dict]:
@@ -162,7 +206,7 @@ def _run_extra_checks(reply: str, specs: list[str]) -> list[str]:
     return fails
 
 
-def judge(case: dict, reply: str, tools: list[str]) -> dict:
+def judge(case: dict, reply: str, tools: list[str], tool_count: int = 0) -> dict:
     """规则判定，返回子项 + 总体是否通过。
 
     子项：
@@ -191,6 +235,9 @@ def judge(case: dict, reply: str, tools: list[str]) -> dict:
     clean_ok = not hits
 
     extra_fails = _run_extra_checks(reply, case.get("extra", []))
+    min_tools = int(case.get("min_tools", 0))
+    if tool_count < min_tools:
+        extra_fails.append(f"工具调用不足（应≥{min_tools}，实际 {tool_count}）")
     extra_ok = not extra_fails
 
     return {
@@ -206,49 +253,79 @@ def judge(case: dict, reply: str, tools: list[str]) -> dict:
     }
 
 
-async def run_case(case: dict, use_critic: bool) -> dict:
+async def run_case(case: dict, use_critic: bool, judge_model=None) -> dict:
     memory = blank_memory()
     buf = io.StringIO()
     t0 = time.perf_counter()
     error = None
     verdict_passed, verdict_reason, rounds = None, "", 1
     reply, trace = "", ""
+    # 多轮用例：turns 是一串用户消息，跑在同一个 agent 上（上下文连续）。
+    # 单轮用例退化成 turns = [q]。
+    turns = case.get("turns") or [case["q"]]
+    replies: list[str] = []
+    question = " → ".join(turns)
 
     # 整段重定向 stdout：AgentScope 会把思考过程和工具调用打到控制台，
     # 30 条用例跑下来会淹没进度输出。这里收进 buffer，失败时再回看。
     with contextlib.redirect_stdout(buf):
         try:
             agent, model = create_agent(memory)
-            if use_critic:
-                reply, trace, verdict, rounds = await get_reply_with_review(
-                    agent, model, case["q"], memory, persist=False
-                )
-                verdict_passed = bool(verdict.passed)
-                verdict_reason = verdict.reason
-            else:
-                reply, trace = await get_reply_with_trace(agent, model, case["q"], memory)
+            for turn in turns:
+                if use_critic:
+                    reply, trace, verdict, rounds = await get_reply_with_review(
+                        agent, model, turn, memory, persist=False
+                    )
+                    verdict_passed = bool(verdict.passed)
+                    verdict_reason = verdict.reason
+                else:
+                    reply, trace = await get_reply_with_trace(agent, model, turn, memory)
+                replies.append(reply)
         except Exception as exc:  # noqa: BLE001
             error = f"{type(exc).__name__}: {exc}"
 
+    reply = replies[-1] if replies else reply
     latency = time.perf_counter() - t0
     if error:
-        tools, tool_error = parse_tools(trace), False
+        tools, tool_error, tool_count, evidence = parse_tools(trace), False, 0, ""
     else:
-        tools, tool_error = await inspect_memory(agent)
+        tools, tool_error, tool_count, evidence = await inspect_memory(agent)
     # 平台侧拦截/限流也算环境问题，不能算模型能力
     if any(k in reply for k in API_ERROR_MARKERS):
         tool_error = True
-    result = judge(case, reply, tools)
+    result = judge(case, reply, tools, tool_count)
+
+    # 有 rubric 的语义题交给 LLM 判定（规则判关键词会误伤）
+    if judge_model is not None and case.get("rubric"):
+        verdict = await llm_judge(
+            judge_model,
+            case.get("q") or question,
+            reply,
+            case["rubric"],
+            evidence,
+            today=get_current_date(),
+        )
+        result["llm_score"] = verdict["score"]
+        result["llm_reason"] = verdict["reason"]
+        result["point_ok"] = verdict["ok"]
+        result["passed"] = result["tool_ok"] and result["clean_ok"] and verdict["ok"]
+    else:
+        result["llm_score"] = None
+        result["llm_reason"] = ""
     return {
         "id": case["id"],
         "cat": case["cat"],
-        "question": case["q"],
+        "question": question,
         "reply": reply,
+        "replies": replies,
         "trace": trace,
         "stdout_tail": buf.getvalue()[-1500:],
         "latency_s": round(latency, 2),
         "rounds": rounds,
         "tool_error": tool_error,
+        "tool_call_count": tool_count,
+        "steps": await collect_steps(agent) if not error else [],
+        "evidence": evidence[:800],
         "critic_passed": verdict_passed,
         "critic_reason": verdict_reason,
         "error": error,
@@ -265,6 +342,7 @@ def write_report(run_dir: Path, results: list[dict], meta: dict) -> None:
     lines.append(f"- 时间：{meta['started_at']}")
     lines.append(f"- 用例数：{len(results)}（有效 {len(scored)}，环境失败 {len(infra)}）")
     lines.append(f"- Critic：{'开启' if meta['critic'] else '关闭'}")
+    lines.append(f"- LLM 判定：{'开启' if meta.get('llm_judge') else '关闭（用关键词）'}")
     lines.append("")
     lines.append(f"**有效通过率：{len(passed)}/{len(scored)} = "
                  f"{len(passed) / max(len(scored), 1):.0%}**")
@@ -299,7 +377,10 @@ def write_report(run_dir: Path, results: list[dict], meta: dict) -> None:
         if not r["tool_ok"]:
             reasons.append(f"工具不符（实际 {','.join(r['tools_used']) or '无'}）")
         if not r["point_ok"]:
-            reasons.append("缺要点：" + "；".join(r["missing_points"]))
+            if r.get("llm_score") is not None:
+                reasons.append(f"LLM 判分 {r['llm_score']}/2：{r['llm_reason']}")
+            else:
+                reasons.append("缺要点：" + "；".join(r["missing_points"]))
         if not r["clean_ok"]:
             reasons.append("出现禁词：" + "、".join(r["forbidden_hits"]))
         if not r.get("extra_ok", True):
@@ -344,6 +425,8 @@ async def main() -> int:
     ap.add_argument("--cat", default="")
     ap.add_argument("--only", default="")
     ap.add_argument("--no-critic", action="store_true")
+    ap.add_argument("--llm-judge", action="store_true",
+                    help="对带 rubric 的用例启用 LLM 判定（更准，每题多一次模型调用）")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -366,12 +449,26 @@ async def main() -> int:
     meta = {
         "started_at": datetime.now().isoformat(timespec="seconds"),
         "critic": not args.no_critic,
+        "llm_judge": args.llm_judge,
     }
+
+    judge_model = None
+    if args.llm_judge:
+        from agentscope.model import DashScopeChatModel
+
+        judge_model = DashScopeChatModel(
+            model_name=os.getenv("KENDER_JUDGE_MODEL", "qwen-plus"),
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+            # 判定必须可复现：同一份回答两次打分不一致，评测就没有意义了
+            generate_kwargs={"temperature": 0.0},
+        )
+        print(f"[eval] LLM 判定已启用（{os.getenv('KENDER_JUDGE_MODEL', 'qwen-plus')}）")
     print(f"[eval] {len(cases)} 条用例，critic={'on' if meta['critic'] else 'off'}")
 
     results = []
     for i, case in enumerate(cases, 1):
-        r = await run_case(case, use_critic=not args.no_critic)
+        r = await run_case(case, use_critic=not args.no_critic, judge_model=judge_model)
+        trace_store.save_run(r, run_id)
         results.append(r)
         flag = "PASS" if r["passed"] else "FAIL"
         print(f"  [{i}/{len(cases)}] {r['id']:<4} {flag}  "

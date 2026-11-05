@@ -1,0 +1,5 @@
+{"id":"MT01","cat":"multiturn","turns":["我叫杨恺","我叫什么名字？"],"tools":[],"any":[["杨恺"]]}
+{"id":"MT02","cat":"multiturn","turns":["上海天气怎么样？","那北京呢？"],"tools":["get_weather"],"min_tools":2,"any":[["北京"]]}
+{"id":"MT03","cat":"multiturn","turns":["帮我查一下天气","上海"],"tools":["get_weather"],"any":[["上海"]]}
+{"id":"MT04","cat":"multiturn","turns":["我喜欢喝美式咖啡","推荐一杯咖啡"],"tools":[],"any":[["美式"]]}
+{"id":"MT05","cat":"multiturn","turns":["上海天气怎么样","我是说深圳"],"tools":["get_weather"],"any":[["深圳"]]}
