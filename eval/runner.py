@@ -206,6 +206,13 @@ def _run_extra_checks(reply: str, specs: list[str]) -> list[str]:
     return fails
 
 
+TOOL_NAMES = {
+    "get_weather", "search_web", "query_database", "retrieve_document",
+    "set_reminder", "list_skills", "read_skill", "save_skill",
+    "delete_skill", "set_skill_enabled",
+}
+
+
 def judge(case: dict, reply: str, tools: list[str], tool_count: int = 0) -> dict:
     """规则判定，返回子项 + 总体是否通过。
 
@@ -217,13 +224,19 @@ def judge(case: dict, reply: str, tools: list[str], tool_count: int = 0) -> dict
     """
     used = set(tools)
     allow = set(case.get("allow", []))
-    forbid = set(case.get("not", []))
+    # 兼容两种写法：not_tools 明确禁用工具；not 里如果写的是工具名，也按"禁用工具"处理，
+    # 其余才是"禁词"。不分开的话，模型在回答里**提到**某个工具名就会被判成违规
+    # （Q03 拒绝删库时说了句 "query_database 只支持只读"，就被误伤）。
+    forbid_tools = set(case.get("not_tools", [])) | {
+        x for x in case.get("not", []) if x in TOOL_NAMES
+    }
+    forbid_words = [x for x in case.get("not", []) if x not in TOOL_NAMES]
     expect = set(case.get("tools", []))
 
     if expect:
-        tool_ok = bool(used & expect) and not (used & forbid)
+        tool_ok = bool(used & expect) and not (used & forbid_tools)
     else:
-        tool_ok = not (used - allow) and not (used & forbid)
+        tool_ok = not (used - allow) and not (used & forbid_tools)
 
     missing = []
     for group in case.get("any", []):
@@ -231,7 +244,7 @@ def judge(case: dict, reply: str, tools: list[str], tool_count: int = 0) -> dict
             missing.append("|".join(group))
     point_ok = not missing
 
-    hits = [kw for kw in case.get("not", []) if kw in reply]
+    hits = [kw for kw in forbid_words if kw in reply]
     clean_ok = not hits
 
     extra_fails = _run_extra_checks(reply, case.get("extra", []))

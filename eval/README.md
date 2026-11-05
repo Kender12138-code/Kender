@@ -30,6 +30,7 @@ python eval/runner.py --llm-judge         # 对带 rubric 的题目用 LLM 判�
 | `cases_hard.jsonl` | 12 | 格式约束、抗幻觉、抗诱导、越权、单位换算、指令注入 |
 | `cases_multiturn.jsonl` | 5 | 跨轮记忆、指代消解、槽位补全、偏好延续 |
 | `cases_edge.jsonl` | 10 | 不存在的地点、空输入、冲突约束、三城并发、中英混排 |
+| `cases_db.jsonl` | 3 | 自然语言查库（NL2SQL）：查订单数、查品类、拒绝删库 |
 
 用例字段：
 
@@ -39,6 +40,7 @@ python eval/runner.py --llm-judge         # 对带 rubric 的题目用 LLM 判�
  "tools":["get_weather"],                    // 期望调用（空数组=不该调）
  "allow":["search_web"],                     // 可以调但不强求
  "not":["get_weather"],                      // 禁止调用
+ "not_tools":["query_database"],             // 显式禁用工具（推荐写法）
  "min_tools":2,                              // 至少调几次
  "any":[["上海"],["度","℃","气温"]],          // 关键词要点（组内任一）
  "extra":["no_exclamation","max_sentences:1"],// 确定性格式约束

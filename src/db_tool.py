@@ -86,13 +86,17 @@ def _ask(system: str, user: str, model: str = "qwen-plus") -> str:
     return r.choices[0].message.content
 
 
-def get_schema(db_path: str = DB_PATH) -> str:
+def get_schema(db_path: str | None = None) -> str:
     """抽表结构 + 每表两行样例。
 
     样例是关键：只给字段名，模型会把 status=1 猜成"成功"，给两行真实数据它就不用猜。
     表很多（几十张）时，这里改成"只返回表名清单"，让模型先用第二次调用确认目标表，
     再把那几张表的结构喂给它（两级策略，避免 schema 撑爆上下文）。
+
+    注意 db_path 默认值在函数体内取：写成参数默认值 `db_path=DB_PATH` 会在导入时
+    就把路径固化下来，之后改环境变量或 monkeypatch 都不生效（测试踩过）。
     """
+    db_path = db_path or DB_PATH
     if not os.path.exists(db_path):
         return f"（数据库文件不存在：{db_path}）"
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -120,8 +124,9 @@ def _clean(raw: str) -> str:
     return s.replace("```sql", "").replace("```", "").strip().strip("`").rstrip(";").strip()
 
 
-def get_tables(db_path: str = DB_PATH) -> set:
-    """库里真实存在的表名集合。"""
+def get_tables(db_path: str | None = None) -> set:
+    """库里真实存在的表名集合（小写）。"""
+    db_path = db_path or DB_PATH
     if not os.path.exists(db_path):
         return set()
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -145,11 +150,28 @@ def _validate(sql: str, limit: int) -> str:
     if hit:
         raise ValueError(f"命中危险关键字 {hit.group(0)}，已拦截")
     # 关键防线：防止模型臆造表名后"安静地答错"（实测高发场景）
-    used = {m.group(1).lower() for m in re.finditer(r"(?i)\b(?:from|join)\s+([a-z_]\w*)", sql)}
-    bad = used - get_tables()
+    # 注意三点：
+    #   1) 标识符可能带引号/反引号/方括号，先剥掉
+    #   2) 中文表名也要能识别（[a-z_]\w* 匹配不到中文，会让臆造表名漏过）
+    #   3) WITH ... AS (...) 定义的 CTE 名不是真实表，不能算进白名单校验
+    used = set()
+    for raw_name in re.findall(r"(?i)\b(?:from|join)\s+([^\s(,;)]+)", sql):
+        name = raw_name.strip().strip('`"[]').lower()
+        if name:
+            used.add(name)
+    cte_names = {
+        m.lower()
+        for m in re.findall(r"(?i)\bwith\s+(?:recursive\s+)?([a-z_]\w*)\s+as\s*\(", sql)
+    } | {
+        m.lower()
+        for m in re.findall(r"(?i),\s*([a-z_]\w*)\s+as\s*\(", sql)
+    }
+    used -= cte_names
+    existing = get_tables()
+    bad = used - existing
     if bad:
         raise ValueError(
-            f"引用了库中不存在的表 {sorted(bad)}，库里只有 {sorted(get_tables())}"
+            f"引用了库中不存在的表 {sorted(bad)}，库里只有 {sorted(existing)}"
         )
     if "limit" not in low:
         sql = f"{sql} LIMIT {limit}"
