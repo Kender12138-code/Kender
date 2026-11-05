@@ -586,6 +586,10 @@ async def main() -> int:
     print(f"\n[eval] 有效通过 {ok}/{len(scored)} = {ok / max(len(scored), 1):.0%}")
     if len(scored) < len(results):
         print(f"[eval] 环境失败 {len(results) - len(scored)} 条（不计入通过率）")
+    # 机器可读的失败清单：run_all 会收集它做汇总，省得人翻每一份报告
+    failed_ids = [r["id"] for r in scored if not r["passed"]]
+    if failed_ids:
+        print(f"[eval] 失败用例: {', '.join(failed_ids)}")
     print(f"[eval] 报告：{run_dir / 'report.md'}")
     return 0
 

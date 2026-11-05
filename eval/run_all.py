@@ -45,7 +45,9 @@ def _utf8():
             pass
 
 
-def run_suite(name: str, cases: Path, extra: list[str], quiet: bool) -> tuple[int, int]:
+def run_suite(
+    name: str, cases: Path, extra: list[str], quiet: bool
+) -> tuple[int, int, list[str]]:
     cmd = [sys.executable, str(RUNNER), "--cases", str(cases), "--llm-judge",
            "--isolate-skills", *extra]
     proc = subprocess.run(
@@ -61,6 +63,7 @@ def run_suite(name: str, cases: Path, extra: list[str], quiet: bool) -> tuple[in
     if not quiet:
         print(out)
     passed = total = 0
+    failed: list[str] = []
     for line in out.splitlines():
         if "有效通过" in line:
             part = line.split("有效通过")[1]
@@ -68,7 +71,25 @@ def run_suite(name: str, cases: Path, extra: list[str], quiet: bool) -> tuple[in
             if "/" in frac:
                 a, b = frac.split("/")
                 passed, total = int(a), int(b)
-    return passed, total
+        elif "失败用例:" in line:
+            failed = [x.strip() for x in line.split("失败用例:")[1].split(",") if x.strip()]
+    return passed, total, failed
+
+
+def prune_results(keep: int) -> None:
+    """只保留最近 keep 次运行目录（trace 数据库不动）。"""
+    results_dir = EVAL_DIR / "results"
+    if not results_dir.is_dir():
+        return
+    runs = sorted(p for p in results_dir.iterdir() if p.is_dir() and p.name.startswith("run_"))
+    victims = runs[:-keep] if keep > 0 else runs
+    for path in victims:
+        for f in path.iterdir():
+            if f.is_file():
+                f.unlink()
+        path.rmdir()
+    if victims:
+        print(f"[clean] 清理了 {len(victims)} 个历史运行目录（保留最近 {keep} 次）")
 
 
 def main() -> int:
@@ -76,16 +97,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--prune", type=int, default=0,
+                    help="跑完后只保留最近 N 次运行目录（0 = 不清理）")
     args = ap.parse_args()
 
     grand_pass = grand_total = 0
     rows = []
+    all_failed: list[str] = []
     for rnd in range(args.repeat):
         for name, cases, extra in SUITES:
-            passed, total = run_suite(name, cases, extra, args.quiet)
+            passed, total, failed = run_suite(name, cases, extra, args.quiet)
             rows.append((rnd + 1, name, passed, total))
             grand_pass += passed
             grand_total += total
+            all_failed.extend(f"{name}/{cid}" for cid in failed)
 
     print()
     print(f"{'轮':<3}{'套件':<6}{'通过':>6}{'总数':>6}{'通过率':>8}")
@@ -96,6 +121,13 @@ def main() -> int:
     print("-" * 32)
     overall = grand_pass / grand_total if grand_total else 0
     print(f"{'合计':<9}{grand_pass:>6}{grand_total:>6}{overall:>8.0%}")
+
+    if all_failed:
+        print()
+        print("失败用例：" + "、".join(all_failed))
+
+    if args.prune:
+        prune_results(args.prune)
 
     return 0 if grand_pass == grand_total else 1
 
