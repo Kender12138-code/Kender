@@ -542,6 +542,45 @@ description: 回答业务数据问题时使用（订单、商品、销量）：�
 
 ---
 
+### 13. 评测体系（把"感觉变好了"换成数字）
+
+**要解决的问题**：改一版 prompt，到底变好还是变差？没有评测就只能靠感觉。
+而"感觉"在这个项目里错过三次——模型答"严重失实""超出能力范围""无降雪"，
+关键词判定全判成失败，实际都是对的。
+
+**四套件、57 条用例**（`eval/`）：
+
+| 文件 | 条数 | 覆盖 |
+| --- | --- | --- |
+| `cases.jsonl` | 30 | 天气 / 搜索 / 填槽 / 多轮 / 闲聊 / 边界 / 文档 |
+| `cases_hard.jsonl` | 12 | 格式约束、抗幻觉、越权、单位换算、指令注入 |
+| `cases_multiturn.jsonl` | 5 | 跨轮记忆、指代消解、槽位补全、偏好延续 |
+| `cases_edge.jsonl` | 10 | 不存在的地点、空输入、冲突约束、三城并发、中英混排 |
+
+**两层判定**：
+
+- **规则层**（确定性、零成本）：工具选对没、格式守没守、有没有禁词、
+  最少调用几次。工具调用从 `agent.memory` 取并集，跨重试、跨轮次都算得到。
+- **LLM 层**（`--llm-judge`）：带 `rubric` 的开放题按 0/1/2 打分。
+  判定器必须拿到**当前日期**和**工具实际返回**，否则会把"引用了工具数据"
+  和"日期推算"误判成编造——这两个坑都踩过（E02 / E09）。
+
+**环境失败单独排除**：搜索超时、天气接口失败、平台内容审核拦截
+（`DataInspectionFailed`）不计入通过率，否则基础设施抖动会被读成模型退化。
+
+**轨迹落库**：每次运行写入 SQLite（`runs` + `steps` 两张表），
+`python eval/show_trace.py E10` 可以直接看某条用例的每次工具调用和返回；
+`--stats` 还能列出"最慢"和"不稳定"的用例。
+
+```bash
+python eval/runner.py                                      # 基础集
+python eval/runner.py --cases eval/cases_hard.jsonl        # 难题集
+python eval/runner.py --cases eval/cases_edge.jsonl --llm-judge
+python eval/show_trace.py --stats
+```
+
+---
+
 ## ⚠️ 已知限制与边界
 
 诚实列出当前版本的取舍，这也是面试中该主动说清的部分：
@@ -554,7 +593,7 @@ description: 回答业务数据问题时使用（订单、商品、销量）：�
 | 多 Agent 协作层级 | 当前是**评审式**（Generator + Critic），尚未做到上下级式（Planner + 多 Worker 分工） |
 | 长期记忆 | 全量 key_facts 回灌 system prompt，未做向量检索式的记忆召回，规模变大后需优化 |
 | RAG 检索 | 纯向量检索，未做混合检索（BM25 + 向量）与重排序（rerank） |
-| CLI 模式 | 不带 Critic 审核（调用 `get_reply`），只有 Web 与 API 走 `get_reply_with_review` |
+| CLI 模式 | 已与 Web 对齐（都走 `get_reply_with_review`），CLI 额外打印自动重写次数 |
 | 并发 | 单实例，未做请求队列；但 Web 界面已实现**多会话隔离**（每个浏览器会话独立 Agent 与记忆，访客不落盘），仅 FastAPI 接口仍共享全局 Agent |
 | NL2SQL | 仅支持 SQLite 单方言；依赖 prompt 约束 + 规则校验，**未做**意图层（槽位）显式抽取；查不存在的表靠 `NO_TABLE` 拒绝，不做跨库 join 的自动推理 |
 | 技能机制 | **单租户**：所有技能共用一个 `data/skills/` 目录，未做多客户隔离（每客户一份技能目录 + 独立开关） |
@@ -592,6 +631,8 @@ description: 回答业务数据问题时使用（订单、商品、销量）：�
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — 部署/演示方案，让面试官点开即用。
 - [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) — 逐模块代码讲解稿与高频面试追问预设，帮助把项目讲清楚。
 - [`docs/NL2SQL.md`](docs/NL2SQL.md) — 自然语言查库的设计说明、实测踩坑与已知边界。
+- [`docs/OPTIMIZATION_2026-11.md`](docs/OPTIMIZATION_2026-11.md) — 2026-11 工程优化记录：五个真实缺陷的根因/修复/验证，含面试讲法。
+- [`eval/README.md`](eval/README.md) — 评测体系说明：四套件、两层判定、轨迹库。
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发约定。
 
 ---
