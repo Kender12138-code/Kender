@@ -9,3 +9,5 @@ data/
 venv/
 .venv/
 *.log
+# eval 产物（每次跑都生成，不入库）
+eval/results/

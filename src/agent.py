@@ -649,6 +649,48 @@ async def critique_reply(model, user_message, reply_text, trace="") -> CriticVer
         return CriticVerdict(passed=True, reason="审核异常，默认放行")
 
 
+async def _collect_tool_outputs(agent, limit_chars: int = 600) -> str:
+    """把本轮工具实际返回的内容拼成一段文本。
+
+    为什么需要：Critic 打回重写时，第二次生成往往不再调用工具（凭 ReAct 记忆重写）。
+    模型这时看不到原始数据，只有两个选择——凭印象编，或者把工具输出原样复读。
+    eval 里的 W05 就是这样退化成 "深圳: 🌦️ +28°C" 的。
+    把 Observation 显式塞回重写提示词，重写才有依据。
+    """
+    try:
+        mem = await agent.memory.get_memory()
+    except Exception:  # noqa: BLE001
+        return ""
+    parts = []
+    for m in mem:
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                text = _stringify_tool_output(b.get("output")).strip()
+                if text:
+                    if len(text) > limit_chars:
+                        text = text[:limit_chars] + "…（已截断）"
+                    parts.append(text)
+    return "\n---\n".join(parts[-3:])
+
+
+def _looks_like_echo(reply: str, tool_text: str) -> bool:
+    """判断回答是不是把工具原始输出原样复读了一遍。
+
+    工业上这叫"没有完成转述"：工具给的是结构化数据，用户要的是人话。
+    直接复读既没用，也说明模型没理解数据。
+    """
+    if not reply.strip():
+        return True
+    if not tool_text:
+        return False
+    norm = lambda s: re.sub(r"\s+", "", s)  # noqa: E731
+    r, t = norm(reply), norm(tool_text)
+    return len(r) <= 40 and r in t
+
+
 async def get_reply_with_review(
     agent, model, user_message, memory, max_retries: int = 2, persist: bool = True
 ):
@@ -657,7 +699,7 @@ async def get_reply_with_review(
     流程：
         第 1 次生成 → Critic 审核
             ├ 合格  → 返回
-            └ 不合格 → 把批评意见回灌给 Generator 重写（最多 max_retries 次）
+            └ 不合格 → 把批评意见 + 工具原始结果回灌给 Generator 重写（最多 max_retries 次）
 
     优化：本轮没有调用工具时直接跳过审核。
     闲聊和"追问用户"没有审核价值，省下一整轮 token。
@@ -672,14 +714,18 @@ async def get_reply_with_review(
     # 打回重写时，后续轮次可能不再调工具（凭 ReAct 记忆直接重写），
     # 那样轨迹会变成"本轮没有调用工具"。这里保留最后一个真正用过工具的轨迹。
     last_trace_with_tools = ""
+    last_tool_outputs = ""
 
     for attempt in range(max_retries + 1):
         rounds = attempt + 1
         reply_text, trace, tool_calls = await _run_once(agent, model, message)
         if tool_calls > 0:
             last_trace_with_tools = trace
+            last_tool_outputs = await _collect_tool_outputs(agent)
 
-        if tool_calls == 0:
+        echoed = _looks_like_echo(reply_text, last_tool_outputs)
+
+        if tool_calls == 0 and not echoed:
             # 没调工具 = 闲聊或正在追问用户，没必要审核
             # ⚠️ 修复（2026-09-09）：原来这里直接 return，跳过了 _persist_turn，
             # 于是"我叫XX""我要去出差""我不吃香菜"这类不触发工具的陈述
@@ -690,12 +736,18 @@ async def get_reply_with_review(
             )
             return (
                 reply_text,
-                trace or last_trace_with_tools,
+                last_trace_with_tools or trace,
                 CriticVerdict(passed=True, reason="本轮未调用工具，跳过审核"),
                 rounds,
             )
 
-        verdict = await critique_reply(model, user_message, reply_text, trace)
+        if echoed:
+            # 复读原始数据同样算不合格，不必再花一次 Critic 调用
+            verdict = CriticVerdict(
+                passed=False, reason="回答只是复述了工具原始数据，没有转成自然语言"
+            )
+        else:
+            verdict = await critique_reply(model, user_message, reply_text, trace)
         print(f"[critic] 第 {rounds} 轮：passed={verdict.passed} | {verdict.reason}")
 
         if verdict.passed or attempt == max_retries:
@@ -703,19 +755,21 @@ async def get_reply_with_review(
             await _persist_turn(
                 model, memory, user_message, reply_text, persist=persist
             )
-            return reply_text, trace, verdict, rounds
+            return reply_text, last_trace_with_tools or trace, verdict, rounds
 
-        # 打回重写：把批评意见附加到问题上，让 Generator 知道哪里没做好
-        message = (
-            f"{user_message}\n\n"
-            f"[上一版回答未通过审核] {verdict.reason}\n"
-            f"请针对这个问题重新回答，务必直接回应用户的问题，"
-            f"并且只使用工具返回的真实信息，不要编造。"
+        # 打回重写：批评意见 + 工具原始结果一起回灌。
+        # 只给批评意见的话，模型看不到数据，只能编或者复读。
+        message = f"{user_message}\n\n[上一版回答未通过审核] {verdict.reason}\n"
+        if last_tool_outputs:
+            message += f"\n【本轮工具实际返回的内容，只能依据它回答】\n{last_tool_outputs}\n"
+        message += (
+            "\n请重新回答用户的问题：用自然语言直接回答，"
+            "不要复述原始数据，不要补充工具里没有的信息。"
         )
 
     # 理论上到不了这里（循环内必返回），留个兜底防止重构时出纰漏
     await _persist_turn(model, memory, user_message, reply_text, persist=persist)
-    return reply_text, trace, CriticVerdict(passed=True, reason=""), rounds
+    return reply_text, last_trace_with_tools or trace, CriticVerdict(passed=True, reason=""), rounds
 
 
 async def get_reply(agent, model, user_message, memory):

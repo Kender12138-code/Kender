@@ -1,0 +1,399 @@
+"""Kender 评测跑批（eval runner）。
+
+用途：把「我觉得它变好了」换成「30 条用例通过率从 X% 到 Y%」。
+
+用法：
+    python eval/runner.py                # 跑全部 30 条
+    python eval/runner.py --limit 5      # 只跑前 5 条（调试用）
+    python eval/runner.py --cat weather  # 只跑某一类
+    python eval/runner.py --only W01,C01 # 指定 id
+    python eval/runner.py --no-critic    # 跳过 Critic，只看生成（更快更便宜）
+
+产物：
+    eval/results/<run_id>/results.jsonl  每条用例的完整记录
+    eval/results/<run_id>/report.md      人看的报告
+
+设计要点（面试可讲）：
+1. 每条用例用一个全新 agent + 空白记忆 —— 避免上一题的上下文影响下一题。
+2. persist=False —— 评测绝不能污染真实的 data/kender_memory.json。
+3. 判定用「规则」，不用 LLM —— 可复现、零额外 token、失败原因可解释。
+4. 同时记录轨迹（trace）、工具调用、耗时 —— 后面接 trace 落库时直接复用。
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import io
+import json
+import os
+import re
+import sys
+import time
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+# --- 必须在 import src.* 之前设置，避免评测时拉起 MCP 子进程 ---
+os.environ.setdefault("KENDER_ENABLE_MCP", "0")
+
+# Windows 控制台默认 GBK，AgentScope 会把模型思考过程打到 stdout，
+# 一旦模型输出 emoji 就会 UnicodeEncodeError，把正常回答变成"调用模型出错"。
+# 这里强制 UTF-8，保证评测跑得下去（这也是 Kender 在 Windows 上的真实缺陷）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.agent import (  # noqa: E402
+    create_agent,
+    get_reply_with_review,
+    get_reply_with_trace,
+)
+
+TOOL_RE = re.compile(r"调用 `([^`]+)`")
+
+
+def blank_memory() -> dict:
+    """空白记忆：结构必须与 src/memory.py 的持久化格式一致。"""
+    return {"user_name": None, "key_facts": [], "chat_history": []}
+
+
+def parse_tools(trace: str) -> list[str]:
+    """从轨迹文本里抽出工具名（保持顺序、去重）。"""
+    seen, out = set(), []
+    for name in TOOL_RE.findall(trace or ""):
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+TOOL_ERROR_MARKERS = ("timed out", "Timeout", "timeout", "连接失败", "ECONN", "Connection")
+# 平台侧错误：DashScope 内容审核拦截、限流、网关 5xx 等
+API_ERROR_MARKERS = (
+    "DataInspectionFailed",
+    "调用模型时出错了",
+    "Failed to get response",
+    "rate limit",
+    "Throttling",
+)
+
+
+async def inspect_memory(agent) -> tuple[list[str], bool]:
+    """直接从 agent.memory 提取本轮所有工具调用（跨重试累积）。
+
+    为什么不用返回的 trace：Critic 打回重写时，第二轮往往不再调工具，
+    trace 只反映最后一轮，会把"调用过工具"误判成"没调"。
+    memory 是累积的，取并集才准。
+
+    Returns:
+        (工具名列表, 是否发生工具层错误)
+    """
+    tools: list[str] = []
+    outputs: list[str] = []
+    try:
+        mem = await agent.memory.get_memory()
+    except Exception:  # noqa: BLE001
+        return [], False
+    for m in mem:
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                name = b.get("name")
+                if name and name not in tools:
+                    tools.append(name)
+            elif b.get("type") == "tool_result":
+                out = b.get("output")
+                outputs.append(out if isinstance(out, str) else json.dumps(out, ensure_ascii=False))
+    blob = "\n".join(outputs)
+    tool_error = any(k in blob for k in TOOL_ERROR_MARKERS)
+    return tools, tool_error
+
+
+def load_cases(path: Path) -> list[dict]:
+    cases = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            cases.append(json.loads(line))
+    return cases
+
+
+def _run_extra_checks(reply: str, specs: list[str]) -> list[str]:
+    """执行用例自定义的硬性检查，返回失败描述列表。
+
+    为什么不用 LLM 判"格式/禁令"：像"不要用感叹号""三句话以内"这类要求，
+    用正则是确定性的、零成本的，比让模型当裁判更可靠。
+    支持：
+        no_exclamation      不得出现 ！或 !
+        max_sentences:N     按 。！？!? 切句后不超过 N 句
+        has_number:82       回答里要出现这个数字（用于单位换算等）
+        max_chars:N         回答长度不超过 N 字
+    """
+    fails: list[str] = []
+    for spec in specs or []:
+        if spec == "no_exclamation":
+            if "！" in reply or "!" in reply:
+                fails.append("不该用感叹号")
+        elif spec.startswith("max_sentences:"):
+            n = int(spec.split(":", 1)[1])
+            sents = [s for s in re.split(r"[。！？!?]", reply) if s.strip()]
+            if len(sents) > n:
+                fails.append(f"超过 {n} 句（实际 {len(sents)}）")
+        elif spec.startswith("has_number:"):
+            want = spec.split(":", 1)[1]
+            if want not in reply:
+                fails.append(f"缺数字 {want}")
+        elif spec.startswith("max_chars:"):
+            n = int(spec.split(":", 1)[1])
+            if len(reply) > n:
+                fails.append(f"超过 {n} 字（实际 {len(reply)}）")
+        else:
+            fails.append(f"未知检查项 {spec}")
+    return fails
+
+
+def judge(case: dict, reply: str, tools: list[str]) -> dict:
+    """规则判定，返回子项 + 总体是否通过。
+
+    子项：
+      tool_ok   工具调用是否符合预期（该调的都调了、不该调的没调）
+      point_ok  回答是否覆盖了必须出现的要点（同组内任一命中即可）
+      clean_ok  回答里是否出现了禁止内容（幻觉/越权承诺）
+      extra_ok  用例自定义的格式/数量硬约束
+    """
+    used = set(tools)
+    allow = set(case.get("allow", []))
+    forbid = set(case.get("not", []))
+    expect = set(case.get("tools", []))
+
+    if expect:
+        tool_ok = bool(used & expect) and not (used & forbid)
+    else:
+        tool_ok = not (used - allow) and not (used & forbid)
+
+    missing = []
+    for group in case.get("any", []):
+        if not any(kw in reply for kw in group):
+            missing.append("|".join(group))
+    point_ok = not missing
+
+    hits = [kw for kw in case.get("not", []) if kw in reply]
+    clean_ok = not hits
+
+    extra_fails = _run_extra_checks(reply, case.get("extra", []))
+    extra_ok = not extra_fails
+
+    return {
+        "tool_ok": tool_ok,
+        "point_ok": point_ok,
+        "clean_ok": clean_ok,
+        "extra_ok": extra_ok,
+        "passed": tool_ok and point_ok and clean_ok and extra_ok,
+        "tools_used": sorted(used),
+        "missing_points": missing,
+        "forbidden_hits": hits,
+        "extra_fails": extra_fails,
+    }
+
+
+async def run_case(case: dict, use_critic: bool) -> dict:
+    memory = blank_memory()
+    buf = io.StringIO()
+    t0 = time.perf_counter()
+    error = None
+    verdict_passed, verdict_reason, rounds = None, "", 1
+    reply, trace = "", ""
+
+    # 整段重定向 stdout：AgentScope 会把思考过程和工具调用打到控制台，
+    # 30 条用例跑下来会淹没进度输出。这里收进 buffer，失败时再回看。
+    with contextlib.redirect_stdout(buf):
+        try:
+            agent, model = create_agent(memory)
+            if use_critic:
+                reply, trace, verdict, rounds = await get_reply_with_review(
+                    agent, model, case["q"], memory, persist=False
+                )
+                verdict_passed = bool(verdict.passed)
+                verdict_reason = verdict.reason
+            else:
+                reply, trace = await get_reply_with_trace(agent, model, case["q"], memory)
+        except Exception as exc:  # noqa: BLE001
+            error = f"{type(exc).__name__}: {exc}"
+
+    latency = time.perf_counter() - t0
+    if error:
+        tools, tool_error = parse_tools(trace), False
+    else:
+        tools, tool_error = await inspect_memory(agent)
+    # 平台侧拦截/限流也算环境问题，不能算模型能力
+    if any(k in reply for k in API_ERROR_MARKERS):
+        tool_error = True
+    result = judge(case, reply, tools)
+    return {
+        "id": case["id"],
+        "cat": case["cat"],
+        "question": case["q"],
+        "reply": reply,
+        "trace": trace,
+        "stdout_tail": buf.getvalue()[-1500:],
+        "latency_s": round(latency, 2),
+        "rounds": rounds,
+        "tool_error": tool_error,
+        "critic_passed": verdict_passed,
+        "critic_reason": verdict_reason,
+        "error": error,
+        **result,
+    }
+
+
+def write_report(run_dir: Path, results: list[dict], meta: dict) -> None:
+    scored = [r for r in results if not r["tool_error"]]
+    infra = [r for r in results if r["tool_error"]]
+    passed = [r for r in scored if r["passed"]]
+
+    lines = ["# Kender Eval 报告", ""]
+    lines.append(f"- 时间：{meta['started_at']}")
+    lines.append(f"- 用例数：{len(results)}（有效 {len(scored)}，环境失败 {len(infra)}）")
+    lines.append(f"- Critic：{'开启' if meta['critic'] else '关闭'}")
+    lines.append("")
+    lines.append(f"**有效通过率：{len(passed)}/{len(scored)} = "
+                 f"{len(passed) / max(len(scored), 1):.0%}**")
+    if infra:
+        lines.append("")
+        lines.append(f"> 另有 {len(infra)} 条因工具层错误（搜索超时等）未计入，"
+                     f"明细见文末。")
+    lines.append("")
+
+    by_cat: dict[str, list[dict]] = defaultdict(list)
+    for r in scored:
+        by_cat[r["cat"]].append(r)
+    lines.append("## 分类通过率")
+    lines.append("")
+    lines.append("| 类别 | 通过/总数 | 通过率 |")
+    lines.append("|---|---|---|")
+    for cat, rows in sorted(by_cat.items()):
+        ok = sum(1 for r in rows if r["passed"])
+        lines.append(f"| {cat} | {ok}/{len(rows)} | {ok / len(rows):.0%} |")
+    lines.append("")
+
+    lines.append("## 逐条结果")
+    lines.append("")
+    lines.append("| ID | 类别 | 结果 | 工具 | 轮次 | 耗时 | 失败原因 |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for r in results:
+        if r["tool_error"]:
+            mark = "⚠️"
+        else:
+            mark = "✅" if r["passed"] else "❌"
+        reasons = []
+        if not r["tool_ok"]:
+            reasons.append(f"工具不符（实际 {','.join(r['tools_used']) or '无'}）")
+        if not r["point_ok"]:
+            reasons.append("缺要点：" + "；".join(r["missing_points"]))
+        if not r["clean_ok"]:
+            reasons.append("出现禁词：" + "、".join(r["forbidden_hits"]))
+        if not r.get("extra_ok", True):
+            reasons.append("约束未满足：" + "；".join(r.get("extra_fails", [])))
+        if r["error"]:
+            reasons.append("异常：" + r["error"])
+        if r["tool_error"]:
+            reasons.append("环境/接口失败（不计分）")
+        lines.append(
+            f"| {r['id']} | {r['cat']} | {mark} | "
+            f"{','.join(r['tools_used']) or '—'} | {r['rounds']} | {r['latency_s']}s | "
+            f"{'；'.join(reasons) or '—'} |"
+        )
+    lines.append("")
+
+    failed = [r for r in scored if not r["passed"]]
+    if failed:
+        lines.append("## 失败详情")
+        lines.append("")
+        for r in failed:
+            lines.append(f"### {r['id']}　{r['question']}")
+            lines.append("")
+            lines.append(f"- 工具：{','.join(r['tools_used']) or '无'}")
+            lines.append(f"- Critic：{r['critic_passed']} {r['critic_reason']}")
+            lines.append(f"- 回答：{r['reply'][:300]}")
+            lines.append("")
+
+    if infra:
+        lines.append("## 环境失败（不计入通过率）")
+        lines.append("")
+        for r in infra:
+            lines.append(f"- **{r['id']}**　{r['question']}　回答：{r['reply'][:120]}")
+        lines.append("")
+
+    (run_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+async def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cases", default=str(Path(__file__).parent / "cases.jsonl"))
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--cat", default="")
+    ap.add_argument("--only", default="")
+    ap.add_argument("--no-critic", action="store_true")
+    ap.add_argument("--out", default="")
+    args = ap.parse_args()
+
+    cases = load_cases(Path(args.cases))
+    if args.cat:
+        cases = [c for c in cases if c["cat"] == args.cat]
+    if args.only:
+        ids = {x.strip() for x in args.only.split(",") if x.strip()}
+        cases = [c for c in cases if c["id"] in ids]
+    if args.limit:
+        cases = cases[: args.limit]
+    if not cases:
+        print("没有匹配的用例")
+        return 1
+
+    run_id = args.out or datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    run_dir = Path(__file__).parent / "results" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "critic": not args.no_critic,
+    }
+    print(f"[eval] {len(cases)} 条用例，critic={'on' if meta['critic'] else 'off'}")
+
+    results = []
+    for i, case in enumerate(cases, 1):
+        r = await run_case(case, use_critic=not args.no_critic)
+        results.append(r)
+        flag = "PASS" if r["passed"] else "FAIL"
+        print(f"  [{i}/{len(cases)}] {r['id']:<4} {flag}  "
+              f"{r['latency_s']:>5.1f}s  tools={r['tools_used'] or '-'}")
+
+    with (run_dir / "results.jsonl").open("w", encoding="utf-8") as f:
+        for r in results:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    write_report(run_dir, results, meta)
+
+    scored = [r for r in results if not r["tool_error"]]
+    ok = sum(1 for r in scored if r["passed"])
+    print(f"\n[eval] 有效通过 {ok}/{len(scored)} = {ok / max(len(scored), 1):.0%}")
+    if len(scored) < len(results):
+        print(f"[eval] 环境失败 {len(results) - len(scored)} 条（不计入通过率）")
+    print(f"[eval] 报告：{run_dir / 'report.md'}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        print("\n已中断")
+        sys.exit(130)
