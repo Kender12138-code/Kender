@@ -42,6 +42,9 @@ RAG 套件需要先建索引，用 `--rag-fixture` 指向一份文档；其余�
 python eval/run_all.py
 python eval/run_all.py --repeat 2     # 连跑两轮看稳定性
 
+# Web 端实测（先起服务：python main.py --web，另开一个终端跑这条）
+python eval/web_smoke.py
+
 # 普通回归（与用户真实数据隔离）
 python eval/runner.py --llm-judge --no-rag-index
 
