@@ -163,8 +163,12 @@ def get_weather(city: str) -> ToolResponse:
         ToolResponse: 实时天气简要信息。
     """
     def _fetch():
+        # format: 地点 + 天气图标 + 天气描述 + 温度
+        # 为什么带 %C：只给图标和温度时，模型会自己"补"天气现象
+        # （实测把 ✨ 说成"晴"、把 🌦️ 说成"多云转小雨"），而工具并没返回这些。
+        # 把英文描述一起返回，模型只需要翻译，不需要猜。
         req = Request(
-            f"https://wttr.in/{quote(city)}?format=3",
+            f"https://wttr.in/{quote(city)}?format=%l:+%c+%C+%t",
             headers={"User-Agent": "Kender/1.0"},
         )
         with urlopen(req, timeout=8) as resp:

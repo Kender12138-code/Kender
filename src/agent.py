@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import List, Optional
@@ -239,6 +240,8 @@ def create_agent(memory):
 - 【实时信息必须取证】凡是会随时间变化的信息（天气、气温、股价、指数、汇率、新闻、比分、航班），
   必须先调用对应工具；没有工具返回结果时，只能说"暂时查不到"，禁止给出具体数值，
   也禁止使用工具的返回格式（如"城市: 图标 温度"）自行拼接一条数据。
+- 【只转述不脑补】工具返回了什么就说什么。可以把工具返回的英文天气描述翻成中文，
+  但不能添加工具没给的细节——工具只给了温度，就不要说"晴/小雨/多云"。
 - 【不得外推】用户问的是未来（明天、下周、未来几天）而工具只能返回当前值时，
   必须说明"拿不到该时段的数据"，禁止把当前值当成预报，也禁止给出"明天同样是 X"
   这类推断。同理，问历史数据时也不能用当前值代替。
@@ -550,7 +553,11 @@ async def _run_once(agent, model, message):
     """
     full_message = f"{get_current_date()}\n\n用户的问题：{message}"
     msg = Msg(name="user", role="user", content=full_message)
-    msg.id = f"msg_{int(datetime.now().timestamp())}"
+    # ⚠️ 必须用 uuid，不能用秒级时间戳：两轮对话如果在同一秒内完成
+    # （模型答得快时很常见），id 会撞车，AgentScope 把第二条用户消息当重复消息，
+    # 模型看到的上下文还停在自己上一句问话上，于是原样再问一遍。
+    # eval 的 MT03 稳定复现过：耗时 1.3s 的失败、6s 的通过。
+    msg.id = f"msg_{uuid.uuid4().hex[:12]}"
     try:
         reply = await asyncio.wait_for(agent.reply(msg), timeout=TURN_TIMEOUT)
     except asyncio.TimeoutError:
@@ -791,6 +798,7 @@ async def _anchor_short_followup(agent, message: str) -> str:
 
     if not last_assistant.endswith(("？", "?")):
         return message
+    print(f"[anchor] 命中追问锚定：{msg!r}（上一轮问句：{last_assistant[:30]!r}）")
     return (
         f"（上一轮你在向用户追问必要参数，用户这轮的回答是：{msg}。"
         f"请据此补全参数并直接调用工具，不要再重复提问。）\n{msg}"
