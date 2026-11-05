@@ -29,6 +29,16 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80
 
 
+def _default_index_dir() -> str:
+    """索引目录：环境变量优先，其次项目内默认目录。
+
+    ⚠️ 不要在函数签名里写 `index_dir: str = DEFAULT_INDEX_DIR`：
+    默认参数在**导入时**求值，之后改环境变量、改常量都不生效，
+    测试里也没法把索引指到临时目录（db_tool 踩过同样的坑）。
+    """
+    return os.getenv("KENDER_RAG_INDEX_DIR") or DEFAULT_INDEX_DIR
+
+
 def _get_client() -> OpenAI:
     """创建 DashScope OpenAI 兼容客户端（Embedding 与 Chat 共用 base_url）。"""
     api_key = os.getenv("DASHSCOPE_API_KEY")
@@ -99,16 +109,17 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHU
     return chunks
 
 
-def build_index(text: str, index_dir: str = DEFAULT_INDEX_DIR,
+def build_index(text: str, index_dir: str | None = None,
                 chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> int:
     """用文档全文构建 FAISS 向量库并持久化。
 
     Args:
         text: 文档纯文本（由 read_document 加载得到）。
-        index_dir: 索引保存目录。
+        index_dir: 索引保存目录（默认取 _default_index_dir()）。
     Returns:
         分块数量。
     """
+    index_dir = index_dir or _default_index_dir()
     chunks = split_text(text, chunk_size, chunk_overlap)
     if not chunks:
         raise ValueError("文档内容为空或无法分块，请检查文件。")
@@ -126,13 +137,13 @@ def build_index(text: str, index_dir: str = DEFAULT_INDEX_DIR,
     return len(chunks)
 
 
-def index_exists(index_dir: str = DEFAULT_INDEX_DIR) -> bool:
+def index_exists(index_dir: str | None = None) -> bool:
     """判断本地是否已有构建好的向量库（两个文件都在才算有效）。"""
-    base = Path(index_dir)
+    base = Path(index_dir or _default_index_dir())
     return (base / "index.faiss").exists() and (base / "chunks.json").exists()
 
 
-def chunk_count(index_dir: str = DEFAULT_INDEX_DIR) -> int:
+def chunk_count(index_dir: str | None = None) -> int:
     """返回向量库里的文本块总数。
 
     用途：判断语料规模是否值得做 query 改写。
@@ -140,6 +151,7 @@ def chunk_count(index_dir: str = DEFAULT_INDEX_DIR) -> int:
     """
     if not index_exists(index_dir):
         return 0
+    index_dir = index_dir or _default_index_dir()
     try:
         with open(os.path.join(index_dir, "chunks.json"), encoding="utf-8") as f:
             return len(json.load(f))
@@ -147,15 +159,17 @@ def chunk_count(index_dir: str = DEFAULT_INDEX_DIR) -> int:
         return 0
 
 
-def retrieve(query: str, k: int = 4, index_dir: str = DEFAULT_INDEX_DIR):
+def retrieve(query: str, k: int = 4, index_dir: str | None = None):
     """从已构建的向量库中检索与 query 最相关的 k 个文本块。
 
     Args:
         query: 检索问题或关键词。
         k: 返回片段数。
+        index_dir: 索引目录（默认取 _default_index_dir()）。
     Returns:
         相关文本块列表（按相似度升序）；索引不存在返回 None。
     """
+    index_dir = index_dir or _default_index_dir()
     if not index_exists(index_dir):
         return None
 
