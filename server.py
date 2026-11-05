@@ -26,6 +26,7 @@
 
 import asyncio
 import os
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
@@ -39,25 +40,60 @@ from src.agent import (
 )
 from src.memory import load_memory
 
-# 全局单例（在 lifespan 中赋值）
+# 会话表：session_id -> {agent, model, memory, lock}
+# 为什么需要：原来所有请求共用一个 agent，两个用户会往同一份 memory 里写，
+# 而且一个人问长问题时另一个人只能干等（全局锁）。
+# 现在按 session 隔离：各自的 agent、各自的记忆、各自的锁，互不阻塞。
+SESSIONS: "OrderedDict[str, dict]" = OrderedDict()
+MAX_SESSIONS = int(os.getenv("KENDER_MAX_SESSIONS", "8"))
+
+# 兼容旧代码/测试的引用（默认会话的内部对象在 lifespan 里赋值）
 memory = None
 agent = None
 model = None
 
-# 串行锁：所有请求共用同一个 agent 实例，而 AgentScope 的 ReActAgent 会按轮次
-# 往自己的 memory 里追加消息。两个请求并发进来时，A 的 tool_use 可能被插到
-# B 的对话中间，导致回答串台、轨迹错乱。这里先保证正确性（串行执行），
-# 真正的多会话隔离（每个 session 一套 agent）见 README 的后续计划。
-_chat_lock = asyncio.Lock()
+
+def _blank_memory() -> dict:
+    return {"user_name": None, "key_facts": [], "chat_history": []}
 
 
-async def run_chat_turn(message: str):
-    """跑一轮对话（串行执行）。
+async def _build_session(session_id: str) -> dict:
+    """新建一个会话：独立 agent + 独立记忆 + 独立锁。
 
-    抽成独立函数是为了可测试：不用起 HTTP 服务就能验证并发请求不会交错。
+    只有 default 会话读盘上的长期记忆；其它会话从空白开始，
+    避免 A 用户的偏好泄漏给 B 用户。
     """
-    async with _chat_lock:
-        return await get_reply_with_review(agent, model, message, memory)
+    mem = load_memory() if session_id == "default" else _blank_memory()
+    ag, md = create_agent(mem)
+    await attach_mcp_tools(ag.toolkit)  # MCP 子进程会被复用，不会重复启动
+    return {"agent": ag, "model": md, "memory": mem, "lock": asyncio.Lock()}
+
+
+async def get_session(session_id: str = "default") -> dict:
+    sid = (session_id or "default").strip() or "default"
+    session = SESSIONS.get(sid)
+    if session is not None:
+        SESSIONS.move_to_end(sid)  # LRU：常用会话不会被淘汰
+        return session
+
+    session = await _build_session(sid)
+    SESSIONS[sid] = session
+    while len(SESSIONS) > MAX_SESSIONS:
+        SESSIONS.popitem(last=False)
+    return session
+
+
+async def run_chat_turn(message: str, session_id: str = "default"):
+    """跑一轮对话（会话内串行、会话间并行）。
+
+    抽成独立函数是为了可测试：不用起 HTTP 服务就能验证
+    "同会话串行、不同会话互不阻塞"。
+    """
+    session = await get_session(session_id)
+    async with session["lock"]:
+        return await get_reply_with_review(
+            session["agent"], session["model"], message, session["memory"]
+        )
 
 # 可选鉴权：设了 KENDER_API_TOKEN 才校验请求头 X-Kender-Token。
 # 为什么要有：/chat 会真实消耗 DASHSCOPE_API_KEY，服务一旦监听 0.0.0.0
@@ -68,13 +104,11 @@ API_TOKEN = os.getenv("KENDER_API_TOKEN")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服务启动时建 agent、接 MCP；关闭时收尾。"""
+    """服务启动时预热默认会话；关闭时收尾。"""
     global memory, agent, model
-    memory = load_memory()
-    agent, model = create_agent(memory)
-    # MCP 接入失败会自动降级为进程内工具，不影响服务启动
-    await attach_mcp_tools(agent.toolkit)
-    print("[server] Kender 服务已就绪")
+    default = await get_session("default")
+    memory, agent, model = default["memory"], default["agent"], default["model"]
+    print(f"[server] Kender 服务已就绪（默认会话已预热，最多 {MAX_SESSIONS} 个会话）")
     yield
     # 回收 attach_mcp_tools 拉起来的 MCP Server 子进程，别让 8100 留残兵
     shutdown_mcp_server()
@@ -85,7 +119,8 @@ app = FastAPI(title="Kender API", lifespan=lifespan)
 
 
 class ChatBody(BaseModel):
-    message: str        # 必填，用户说的话
+    message: str
+    session_id: str = "default"  # 不同会话各自独立记忆；不传就是 default
 
 
 @app.post("/chat")
@@ -93,7 +128,7 @@ async def chat(body: ChatBody, x_kender_token: str | None = Header(default=None)
     """发消息给 Kender，返回回复 + ReAct 轨迹 + Critic 审核结论。"""
     if API_TOKEN and x_kender_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="缺少或错误的 X-Kender-Token")
-    reply, trace, verdict, rounds = await run_chat_turn(body.message)
+    reply, trace, verdict, rounds = await run_chat_turn(body.message, body.session_id)
     return {
         "reply": reply,
         "trace": trace,
