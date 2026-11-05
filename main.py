@@ -15,7 +15,12 @@ async def run_cli():
       2. 单轮出错（网络抖动、模型报错）不能带走整个会话：
          get_reply 内部的记忆抽取路径不保证吞掉所有异常，这里再兜一层。
     """
-    from src.agent import attach_mcp_tools, create_agent, get_reply, shutdown_mcp_server
+    from src.agent import (
+        attach_mcp_tools,
+        create_agent,
+        get_reply_with_review,
+        shutdown_mcp_server,
+    )
     from src.memory import load_memory
 
     memory = load_memory()
@@ -37,7 +42,14 @@ async def run_cli():
                 break
 
             try:
-                reply = await get_reply(agent, model, user_input, memory)
+                # 与网页端保持一致：走「生成 → Critic 审核 → 不合格重写」链路。
+                # 早期 CLI 直接调 get_reply，既没有质量审核、也没有编造守卫，
+                # 同一句话在 CLI 和网页上表现不一样，属于两个产品。
+                reply, _trace, verdict, rounds = await get_reply_with_review(
+                    agent, model, user_input, memory
+                )
+                if rounds > 1:
+                    print(f"（已自动重写 {rounds - 1} 次：{verdict.reason}）")
             except Exception as e:  # noqa: BLE001
                 print(
                     f"Kender: ⚠️ 这一轮出错了（{type(e).__name__}: {e}），"
