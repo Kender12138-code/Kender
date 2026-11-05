@@ -5,7 +5,7 @@
 ## 怎么跑
 
 ```bash
-# 四套件
+# 五套件
 python eval/runner.py                                      # 基础集 30 条
 python eval/runner.py --cases eval/cases_hard.jsonl        # 难题集 12 条
 python eval/runner.py --cases eval/cases_multiturn.jsonl   # 多轮 5 条

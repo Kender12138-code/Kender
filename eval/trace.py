@@ -114,13 +114,26 @@ def save_run(result: dict, run_id: str, db_path: Path | None = None) -> None:
         conn.close()
 
 
-def recent_runs(limit: int = 20, db_path: Path | None = None) -> list[dict]:
+def recent_runs(limit: int = 20, db_path: Path | None = None,
+                since: str | None = None) -> list[dict]:
+    """取最近的运行记录。
+
+    since 形如 "2026-11-05 21:55"（本地时间字符串，和 created_at 同格式）：
+    只看某个时间点之后的运行。修完 bug 想验证"现在稳不稳"时用得上，
+    否则历史失败会一直拉低通过率。
+    """
     conn = _connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if since:
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE created_at >= ? ORDER BY id DESC LIMIT ?",
+                (since, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()

@@ -56,14 +56,15 @@ def show_recent(n: int):
               f"{(r['tools'] or '-')[:22]:<22} {r['latency_s']:>6.1f} {r['rounds']:>4}")
 
 
-def show_stats():
-    rows = trace_store.recent_runs(limit=10000)
+def show_stats(since: str | None = None):
+    rows = trace_store.recent_runs(limit=100000, since=since)
     if not rows:
         print("数据库还是空的，先跑一次 eval/runner.py")
         return
     total = len(rows)
     passed = sum(r["passed"] for r in rows)
-    print(f"总运行 {total} 次，通过 {passed} 次（{passed / total:.0%}）")
+    print(f"总运行 {total} 次，通过 {passed} 次（{passed / total:.0%}）"
+          + (f"　[仅统计 {since} 之后]" if since else ""))
 
     by_case: dict[str, list[dict]] = {}
     for r in rows:
@@ -106,10 +107,12 @@ def main():
     ap.add_argument("--limit", type=int, default=3)
     ap.add_argument("--recent", type=int, default=0)
     ap.add_argument("--stats", action="store_true")
+    ap.add_argument("--since", default="",
+                    help='只看该时间之后的运行，格式 "2026-11-05 22:00"')
     args = ap.parse_args()
 
     if args.stats:
-        show_stats()
+        show_stats(args.since or None)
     elif args.recent:
         show_recent(args.recent)
     elif args.case_id:

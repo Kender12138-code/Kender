@@ -548,7 +548,7 @@ description: 回答业务数据问题时使用（订单、商品、销量）：�
 而"感觉"在这个项目里错过三次——模型答"严重失实""超出能力范围""无降雪"，
 关键词判定全判成失败，实际都是对的。
 
-**四套件、57 条用例**（`eval/`）：
+**五套件、60 条用例**（`eval/`）：
 
 | 文件 | 条数 | 覆盖 |
 | --- | --- | --- |
@@ -632,7 +632,7 @@ python eval/show_trace.py --stats
 - [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) — 逐模块代码讲解稿与高频面试追问预设，帮助把项目讲清楚。
 - [`docs/NL2SQL.md`](docs/NL2SQL.md) — 自然语言查库的设计说明、实测踩坑与已知边界。
 - [`docs/OPTIMIZATION_2026-11.md`](docs/OPTIMIZATION_2026-11.md) — 2026-11 工程优化记录：五个真实缺陷的根因/修复/验证，含面试讲法。
-- [`eval/README.md`](eval/README.md) — 评测体系说明：四套件、两层判定、轨迹库。
+- [`eval/README.md`](eval/README.md) — 评测体系说明：五套件、两层判定、轨迹库。
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 开发约定。
 
 ---
