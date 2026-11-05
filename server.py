@@ -24,6 +24,7 @@
    与 MCP 客户端同处一个事件循环。
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,21 @@ from src.memory import load_memory
 memory = None
 agent = None
 model = None
+
+# 串行锁：所有请求共用同一个 agent 实例，而 AgentScope 的 ReActAgent 会按轮次
+# 往自己的 memory 里追加消息。两个请求并发进来时，A 的 tool_use 可能被插到
+# B 的对话中间，导致回答串台、轨迹错乱。这里先保证正确性（串行执行），
+# 真正的多会话隔离（每个 session 一套 agent）见 README 的后续计划。
+_chat_lock = asyncio.Lock()
+
+
+async def run_chat_turn(message: str):
+    """跑一轮对话（串行执行）。
+
+    抽成独立函数是为了可测试：不用起 HTTP 服务就能验证并发请求不会交错。
+    """
+    async with _chat_lock:
+        return await get_reply_with_review(agent, model, message, memory)
 
 # 可选鉴权：设了 KENDER_API_TOKEN 才校验请求头 X-Kender-Token。
 # 为什么要有：/chat 会真实消耗 DASHSCOPE_API_KEY，服务一旦监听 0.0.0.0
@@ -77,9 +93,7 @@ async def chat(body: ChatBody, x_kender_token: str | None = Header(default=None)
     """发消息给 Kender，返回回复 + ReAct 轨迹 + Critic 审核结论。"""
     if API_TOKEN and x_kender_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="缺少或错误的 X-Kender-Token")
-    reply, trace, verdict, rounds = await get_reply_with_review(
-        agent, model, body.message, memory
-    )
+    reply, trace, verdict, rounds = await run_chat_turn(body.message)
     return {
         "reply": reply,
         "trace": trace,
