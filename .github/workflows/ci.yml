@@ -30,10 +30,31 @@ jobs:
           pip install ruff
           ruff check eval
 
+      - name: 环境信息
+        # 出问题时第一手资料：Python / pytest / 关键依赖版本
+        run: |
+          python -V
+          python -m pytest --version
+          python -c "import sys; print('cwd ok, sys.path[0]=', sys.path[0])"
+          pip list | grep -Ei "agentscope|faiss|gradio|ddgs|pytest|ruff" || true
+
       - name: 单元测试
         # 全部离线：搜索/嵌入/模型调用都被 mock 或替换，
         # 不需要 DASHSCOPE_API_KEY，CI 里也不该有。
-        run: pytest -q --maxfail=1
+        #
+        # 失败时把最后 20 行写成 ::error:: 注解 —— 这样即使没有管理员权限
+        # 下载日志，也能通过 check-run annotations API 读到真正的报错。
+        run: |
+          set +e
+          pytest -q --maxfail=1 > pytest.log 2>&1
+          code=$?
+          cat pytest.log
+          if [ $code -ne 0 ]; then
+            tail -n 20 pytest.log | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit $code
+          fi
 
   eval-smoke:
     # 评测要真实 API Key，只在手动触发时跑（fork 的 PR 拿不到 secret）
