@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint（只查 eval/）
+        # src/ 里还有一批历史风格问题（未排序 import、blind except 等），
+        # 清理它们会改到业务代码，等专门做一次重构再纳入；
+        # eval/ 是这一轮新写的，要求全绿。
+        run: |
+          pip install ruff
+          ruff check eval
+
+      - name: 单元测试
+        # 全部离线：搜索/嵌入/模型调用都被 mock 或替换，
+        # 不需要 DASHSCOPE_API_KEY，CI 里也不该有。
+        run: pytest -q --maxfail=1
+
+  eval-smoke:
+    # 评测要真实 API Key，只在手动触发时跑（fork 的 PR 拿不到 secret）
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 跑全量评测
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+        run: python eval/run_all.py --quiet

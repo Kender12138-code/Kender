@@ -182,10 +182,15 @@ kender/
 │   ├── skills/                #   运行时写出来的技能（客户在对话里自己写的）
 │   ├── faiss_index/           #   RAG 向量库
 │   └── mcp_server.log         #   MCP Server 日志
-└── tests/
+└── tests/                     # 123 个单元测试，全部离线（不需要 API Key）
     ├── test_memory.py         # 记忆读写测试
     ├── test_skills.py         # 技能机制测试（读写 / 校验 / 注册）
-    └── test_smoke.py          # 冒烟测试（工具返回类型等，无需联网）
+    ├── test_search.py         # 搜索 provider 链与缓存（Bing 解析用静态 HTML）
+    ├── test_rag.py            # 分块 / 建库 / 检索（假 embedding，不联网）
+    ├── test_db_guard.py       # NL2SQL 安全护栏（注入 / 越权 / 白名单）
+    ├── test_judge.py          # 评测判定器（工具/要点/禁词/格式）
+    ├── test_server_concurrency.py  # 会话隔离：同会话串行、跨会话并行
+    └── test_smoke.py          # 冒烟测试（工具返回类型等）
 ```
 
 ---
@@ -624,18 +629,24 @@ python eval/show_trace.py --stats
 - [x] Query 改写（规模阈值控制成本）
 - [x] FastAPI 服务化（lifespan 初始化 + /chat + /health）
 - [x] 技能机制（SKILL.md + 渐进式披露 + 用户自己写技能）
+- [x] 评测体系（7 套件 / 71 条用例 + LLM 判定 + SQLite 轨迹）
+- [x] 单元测试扩到 123 个（全部离线，CI 可跑）
+- [x] GitHub Actions（pytest + eval 目录 lint；全量评测走手动触发）
+- [x] 搜索快路径（Bing 优先，12–24s → 0.3s）
+- [x] API 多会话隔离（session_id + LRU）
 - [ ] 真 token 级 streaming（需改写 AgentScope 调用层以支持流式 ReAct 循环）
 - [ ] 上下级式多 Agent 协作（Planner + 多 Worker 分工，AgentScope `MsgHub` / `sequential_pipeline`）
 - [ ] RAG 混合检索（BM25 + 向量）与重排序（rerank）
 - [ ] 长期记忆的向量化召回（当前全量回灌，规模变大后需优化）
 - [ ] 技能的多租户隔离与审核流程（当前单租户 + 结构校验兜底）
 - [ ] 让 Agent 主动提议"要不要把这套做法记成技能"（当前必须用户明说）
-- [ ] 更完整的单元测试覆盖 agent / tools
+- [ ] 更完整的单元测试覆盖 agent / tools（核心链路已覆盖，agent 的分支路径仍靠评测兜）
 
 ---
 
 ## 📑 配套文档
 
+- [`\.github/workflows/ci.yml`](.github/workflows/ci.yml) — GitHub Actions：推送时跑单元测试 + lint（全量评测要真实 Key，改成手动触发）。
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — 部署/演示方案，让面试官点开即用。
 - [`CODE_WALKTHROUGH.md`](CODE_WALKTHROUGH.md) — 逐模块代码讲解稿与高频面试追问预设，帮助把项目讲清楚。
 - [`docs/NL2SQL.md`](docs/NL2SQL.md) — 自然语言查库的设计说明、实测踩坑与已知边界。
