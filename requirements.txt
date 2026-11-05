@@ -4,6 +4,11 @@
 gradio>=6.0.0
 # AgentScope 的 ToolResponse / ReActAgent API 跨主版本差异较大，锁定 <2.0.0 防破坏性变更
 agentscope>=1.0.0,<2.0.0
+# ⚠️ 必须显式装：agentscope 的 memory 子模块在导入时就 `from sqlalchemy.ext.asyncio import ...`，
+# 但它的包元数据里 sqlalchemy 是可选依赖，不会自动装上。
+# 少了这一行，全新环境里 `import agentscope` 直接 ModuleNotFoundError
+# （本地能跑只是因为机器上碰巧先装过，CI 上 1 秒就挂在这里）。
+sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 # 技能机制：解析 SKILL.md 的 YAML front matter（AgentScope 的 register_agent_skill 用的也是这个库）
 python-frontmatter>=1.0.0
